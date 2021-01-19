@@ -13,8 +13,8 @@ import (
 	"time"
 
 	"github.com/andres-erbsen/clock"
-	"github.com/golang/protobuf/ptypes/wrappers"
 	"github.com/sirupsen/logrus"
+	"github.com/spiffe/go-spiffe/v2/spiffeid"
 	"github.com/spiffe/spire/pkg/common/errorutil"
 	"github.com/spiffe/spire/pkg/common/idutil"
 	"github.com/spiffe/spire/pkg/common/jwtsvid"
@@ -38,6 +38,7 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
 // Number of agentIDs that can be cached
@@ -48,7 +49,7 @@ type HandlerConfig struct {
 	Metrics     telemetry.Metrics
 	Catalog     catalog.Catalog
 	ServerCA    ca.ServerCA
-	TrustDomain url.URL
+	TrustDomain spiffeid.TrustDomain
 	Clock       clock.Clock
 	Manager     *ca.Manager
 
@@ -60,6 +61,8 @@ type HandlerConfig struct {
 }
 
 type Handler struct {
+	node.UnsafeNodeServer
+
 	c       HandlerConfig
 	limiter Limiter
 
@@ -168,7 +171,11 @@ func (h *Handler) Attest(stream node.Node_AttestServer) (err error) {
 		}
 	}
 
-	agentID := attestResponse.AgentId
+	agentID, err := spiffeid.FromString(attestResponse.AgentId)
+	if err != nil {
+		return status.Error(codes.InvalidArgument, err.Error())
+	}
+
 	log = log.WithField(telemetry.SPIFFEID, agentID)
 
 	isBanned, err := h.isBanned(ctx, agentID)
@@ -180,7 +187,7 @@ func (h *Handler) Attest(stream node.Node_AttestServer) (err error) {
 		return status.Error(codes.PermissionDenied, "agent is banned")
 	}
 
-	if csr.SpiffeID != "" && agentID != csr.SpiffeID {
+	if !csr.SpiffeID.IsZero() && csr.SpiffeID != agentID {
 		log.WithField(telemetry.CsrSpiffeID, csr.SpiffeID).Error("Attested SPIFFE ID does not match CSR")
 		return status.Error(codes.NotFound, "attestor returned unexpected response")
 	}
@@ -195,7 +202,7 @@ func (h *Handler) Attest(stream node.Node_AttestServer) (err error) {
 		return status.Error(codes.Internal, "failed to sign CSR")
 	}
 
-	if err := h.updateNodeSelectors(ctx, agentID, attestResponse, request.AttestationData.Type); err != nil {
+	if err := h.updateNodeSelectors(ctx, agentID.String(), attestResponse, request.AttestationData.Type); err != nil {
 		log.WithError(err).Error("Failed to update node selectors")
 		return status.Error(codes.Internal, "failed to update node selectors")
 	}
@@ -206,14 +213,14 @@ func (h *Handler) Attest(stream node.Node_AttestServer) (err error) {
 		return status.Error(codes.Internal, "failed to compose response")
 	}
 
-	isAttested, err := h.isAttested(ctx, agentID)
+	isAttested, err := h.isAttested(ctx, agentID.String())
 	switch {
 	case err != nil:
 		log.WithError(err).Error("Failed to determine if agent has already attested")
 		return status.Error(codes.Internal, "failed to determine if agent has already attested")
 	case isAttested:
 		req := &datastore.UpdateAttestedNodeRequest{
-			SpiffeId:         agentID,
+			SpiffeId:         agentID.String(),
 			CertNotAfter:     svid[0].NotAfter.Unix(),
 			CertSerialNumber: svid[0].SerialNumber.String(),
 		}
@@ -368,7 +375,7 @@ func (h *Handler) FetchX509CASVID(ctx context.Context, req *node.FetchX509CASVID
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 
-	bundle, err := h.getBundle(ctx, h.c.TrustDomain.String())
+	bundle, err := h.getBundle(ctx, h.c.TrustDomain.IDString())
 	if err != nil {
 		log.WithError(err).Error("Failed to fetch bundle")
 		return nil, status.Error(codes.Internal, err.Error())
@@ -439,8 +446,13 @@ func (h *Handler) FetchJWTSVID(ctx context.Context, req *node.FetchJWTSVIDReques
 		return nil, status.Error(codes.PermissionDenied, "caller is not authorized")
 	}
 
+	id, err := spiffeid.FromString(req.Jsr.SpiffeId)
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+
 	token, err := h.c.ServerCA.SignJWTSVID(ctx, ca.JWTSVIDParams{
-		SpiffeID: req.Jsr.SpiffeId,
+		SpiffeID: id,
 		TTL:      time.Duration(req.Jsr.Ttl) * time.Second,
 		Audience: req.Jsr.Audience,
 	})
@@ -509,7 +521,7 @@ func (h *Handler) FetchBundle(ctx context.Context, req *node.FetchBundleRequest)
 		return nil, status.Error(codes.InvalidArgument, "client certificate required for this request")
 	}
 
-	bundle, err := h.getBundle(ctx, h.c.TrustDomain.String())
+	bundle, err := h.getBundle(ctx, h.c.TrustDomain.IDString())
 	if err != nil {
 		log.WithError(err).Error("Failed to fetch bundle")
 		return nil, status.Error(codes.Internal, err.Error())
@@ -635,7 +647,7 @@ func (h *Handler) validateAgentSVID(ctx context.Context, cert *x509.Certificate)
 	}
 
 	resp, err := ds.FetchAttestedNode(ctx, &datastore.FetchAttestedNodeRequest{
-		SpiffeId: agentID,
+		SpiffeId: agentID.String(),
 	})
 	if err != nil {
 		return status.Errorf(codes.Internal, "unable to fetch agent information: %v", err)
@@ -685,7 +697,7 @@ func (h *Handler) validateDownstreamSVID(ctx context.Context, cert *x509.Certifi
 		return nil, errors.New("peer SVID has expired")
 	}
 
-	return h.getDownstreamEntry(ctx, peerID)
+	return h.getDownstreamEntry(ctx, peerID.String())
 }
 
 func (h *Handler) doAttestChallengeResponse(nodeStream node.Node_AttestServer, attestStream nodeattestor.NodeAttestor_AttestClient, request *node.AttestRequest) (*nodeattestor.AttestResponse, error) {
@@ -734,7 +746,7 @@ func (h *Handler) attestToken(ctx context.Context, attestationData *common.Attes
 
 	agentID := (&url.URL{
 		Scheme: "spiffe",
-		Host:   h.c.TrustDomain.Host,
+		Host:   h.c.TrustDomain.String(),
 		Path:   path.Join("spire", "agent", "join_token", tokenValue),
 	}).String()
 
@@ -831,9 +843,9 @@ func (h *Handler) updateNodeSelectors(ctx context.Context, baseSpiffeID string, 
 	return nil
 }
 
-func (h *Handler) getAttestResponse(ctx context.Context, baseSpiffeID string, svid []*x509.Certificate) (*node.AttestResponse, error) {
+func (h *Handler) getAttestResponse(ctx context.Context, baseSpiffeID spiffeid.ID, svid []*x509.Certificate) (*node.AttestResponse, error) {
 	svids := make(map[string]*node.X509SVID)
-	svids[baseSpiffeID] = makeX509SVID(svid)
+	svids[baseSpiffeID.String()] = makeX509SVID(svid)
 
 	regEntries, err := regentryutil.FetchRegistrationEntries(ctx, h.c.Catalog.GetDataStore(), baseSpiffeID)
 	if err != nil {
@@ -857,7 +869,7 @@ func (h *Handler) getAttestResponse(ctx context.Context, baseSpiffeID string, sv
 func (h *Handler) getDownstreamEntry(ctx context.Context, callerID string) (*common.RegistrationEntry, error) {
 	ds := h.c.Catalog.GetDataStore()
 	response, err := ds.ListRegistrationEntries(ctx, &datastore.ListRegistrationEntriesRequest{
-		BySpiffeId: &wrappers.StringValue{
+		BySpiffeId: &wrapperspb.StringValue{
 			Value: callerID,
 		},
 	})
@@ -901,7 +913,7 @@ func (h *Handler) signCSRs(ctx context.Context, peerCert *x509.Certificate, csrs
 			return nil, err
 		}
 
-		baseSpiffeIDPrefix := fmt.Sprintf("%s/spire/agent", h.c.TrustDomain.String())
+		baseSpiffeIDPrefix := fmt.Sprintf("%s/spire/agent", h.c.TrustDomain.IDString())
 
 		sourceAddress := "unknown"
 		if peerAddress, ok := getPeerAddress(ctx); ok {
@@ -914,9 +926,9 @@ func (h *Handler) signCSRs(ctx context.Context, peerCert *x509.Certificate, csrs
 			telemetry.Address:  sourceAddress,
 		})
 
-		if csr.SpiffeID == callerID && strings.HasPrefix(callerID, baseSpiffeIDPrefix) {
+		if csr.SpiffeID == callerID && strings.HasPrefix(callerID.String(), baseSpiffeIDPrefix) {
 			res, err := ds.FetchAttestedNode(ctx, &datastore.FetchAttestedNodeRequest{
-				SpiffeId: csr.SpiffeID,
+				SpiffeId: csr.SpiffeID.String(),
 			})
 			if err != nil {
 				return nil, err
@@ -1016,7 +1028,7 @@ func (h *Handler) buildCASVID(ctx context.Context, params ca.X509CASVIDParams) (
 func (h *Handler) getBundlesForEntries(ctx context.Context, regEntries []*common.RegistrationEntry) (map[string]*common.Bundle, error) {
 	bundles := make(map[string]*common.Bundle)
 
-	ourBundle, err := h.getBundle(ctx, h.c.TrustDomain.String())
+	ourBundle, err := h.getBundle(ctx, h.c.TrustDomain.IDString())
 	if err != nil {
 		return nil, err
 	}
@@ -1054,23 +1066,23 @@ func (h *Handler) getBundle(ctx context.Context, trustDomainID string) (*common.
 }
 
 type CSR struct {
-	SpiffeID  string
+	SpiffeID  spiffeid.ID
 	PublicKey crypto.PublicKey
 }
 
 func (h *Handler) parseAttestCSR(csrBytes []byte) (*CSR, error) {
 	if h.c.AllowAgentlessNodeAttestors {
-		return h.parseCSR(csrBytes, idutil.AllowAnyInTrustDomain(h.c.TrustDomain.Host))
+		return h.parseCSR(csrBytes, idutil.AllowAnyInTrustDomain(h.c.TrustDomain))
 	}
-	return h.parseCSR(csrBytes, idutil.AllowTrustDomainAgent(h.c.TrustDomain.Host))
+	return h.parseCSR(csrBytes, idutil.AllowTrustDomainAgent(h.c.TrustDomain))
 }
 
 func (h *Handler) parseX509CACSR(csrBytes []byte) (*CSR, error) {
-	csr, err := h.parseCSR(csrBytes, idutil.AllowTrustDomain(h.c.TrustDomain.Host))
+	csr, err := h.parseCSR(csrBytes, idutil.AllowTrustDomain(h.c.TrustDomain))
 	if err != nil {
 		return nil, err
 	}
-	if csr.SpiffeID == "" {
+	if csr.SpiffeID.IsZero() {
 		return nil, errors.New("X509 CA CSR is missing the SPIFFE ID") //nolint: golint // leading cap on error is ok
 	}
 	return csr, nil
@@ -1083,13 +1095,18 @@ func (h *Handler) parseCSR(csrBytes []byte, mode idutil.ValidationMode) (*CSR, e
 		return nil, errorutil.WrapError(err, "failed to parse CSR")
 	}
 
-	var spiffeID string
+	var spiffeID spiffeid.ID
 	switch len(csr.URIs) {
 	case 0:
 	case 1:
-		spiffeID, err = idutil.NormalizeSpiffeID(csr.URIs[0].String(), mode)
+		id, err := idutil.NormalizeSpiffeID(csr.URIs[0].String(), mode)
 		if err != nil {
 			h.c.Log.WithError(err).Error("Invalid SPIFFE ID in CSR")
+			return nil, errorutil.WrapError(err, "invalid SPIFFE ID in CSR")
+		}
+
+		spiffeID, err = spiffeid.FromString(id)
+		if err != nil {
 			return nil, errorutil.WrapError(err, "invalid SPIFFE ID in CSR")
 		}
 	default:
@@ -1102,11 +1119,11 @@ func (h *Handler) parseCSR(csrBytes []byte, mode idutil.ValidationMode) (*CSR, e
 	}, nil
 }
 
-func (h *Handler) isBanned(ctx context.Context, agentID string) (bool, error) {
+func (h *Handler) isBanned(ctx context.Context, agentID spiffeid.ID) (bool, error) {
 	ds := h.c.Catalog.GetDataStore()
 
 	resp, err := ds.FetchAttestedNode(ctx, &datastore.FetchAttestedNodeRequest{
-		SpiffeId: agentID,
+		SpiffeId: agentID.String(),
 	})
 	if err != nil {
 		return false, fmt.Errorf("failed to fetch attested node: %v", err)
@@ -1151,7 +1168,7 @@ func createAttestationEntry(ctx context.Context, ds datastore.DataStore, cert *x
 	req := &datastore.CreateAttestedNodeRequest{
 		Node: &common.AttestedNode{
 			AttestationDataType: attestationType,
-			SpiffeId:            spiffeID,
+			SpiffeId:            spiffeID.String(),
 			CertNotAfter:        cert.NotAfter.Unix(),
 			CertSerialNumber:    cert.SerialNumber.String(),
 		}}
@@ -1163,20 +1180,20 @@ func createAttestationEntry(ctx context.Context, ds datastore.DataStore, cert *x
 }
 
 // Gets the SPIFFE ID from a cert or returns an empty string if there is an error.
-func tryGetSpiffeIDFromCert(cert *x509.Certificate) string {
-	spiffeid, _ := getSpiffeIDFromCert(cert)
-	return spiffeid
+func tryGetSpiffeIDFromCert(cert *x509.Certificate) spiffeid.ID {
+	spiffeID, _ := getSpiffeIDFromCert(cert)
+	return spiffeID
 }
 
-func getSpiffeIDFromCert(cert *x509.Certificate) (string, error) {
+func getSpiffeIDFromCert(cert *x509.Certificate) (spiffeid.ID, error) {
 	if len(cert.URIs) == 0 {
-		return "", errors.New("no URI SANs in certificate")
+		return spiffeid.ID{}, errors.New("no URI SANs in certificate")
 	}
-	spiffeID, err := idutil.NormalizeSpiffeIDURL(cert.URIs[0], idutil.AllowAny())
+	spiffeID, err := spiffeid.FromURI(cert.URIs[0])
 	if err != nil {
-		return "", err
+		return spiffeid.ID{}, err
 	}
-	return spiffeID.String(), nil
+	return spiffeID, nil
 }
 
 func makeX509SVID(svid []*x509.Certificate) *node.X509SVID {

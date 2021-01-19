@@ -1,21 +1,19 @@
 package workload
 
 import (
-	"bytes"
 	"context"
 	"crypto"
 	"crypto/x509"
 	"encoding/json"
 	"fmt"
+	"os"
 	"time"
 
-	"github.com/golang/protobuf/jsonpb"
-	structpb "github.com/golang/protobuf/ptypes/struct"
 	"github.com/sirupsen/logrus"
 	"github.com/spiffe/go-spiffe/v2/proto/spiffe/workload"
+	"github.com/spiffe/spire/pkg/agent/api/rpccontext"
 	"github.com/spiffe/spire/pkg/agent/client"
 	"github.com/spiffe/spire/pkg/agent/manager/cache"
-	"github.com/spiffe/spire/pkg/common/api/rpccontext"
 	"github.com/spiffe/spire/pkg/common/bundleutil"
 	"github.com/spiffe/spire/pkg/common/jwtsvid"
 	"github.com/spiffe/spire/pkg/common/telemetry"
@@ -24,6 +22,8 @@ import (
 	"github.com/zeebo/errs"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/types/known/structpb"
 )
 
 type Manager interface {
@@ -44,6 +44,7 @@ type Config struct {
 }
 
 type Handler struct {
+	workload.UnsafeSpiffeWorkloadAPIServer
 	c Config
 }
 
@@ -177,6 +178,12 @@ func (h *Handler) FetchX509SVID(_ *workload.X509SVIDRequest, stream workload.Spi
 	ctx := stream.Context()
 	log := rpccontext.Logger(ctx)
 
+	// The agent health check currently exercises the Workload API. Since this
+	// can happen with some frequency, it has a tendency to fill up logs with
+	// hard-to-filter details if we're not careful (e.g. issue #1537). Only log
+	// if it is not the agent itself.
+	quietLogging := rpccontext.CallerPID(ctx) == os.Getpid()
+
 	selectors, err := h.c.Attestor.Attest(ctx)
 	if err != nil {
 		log.WithError(err).Error("Workload attestation failed")
@@ -189,7 +196,7 @@ func (h *Handler) FetchX509SVID(_ *workload.X509SVIDRequest, stream workload.Spi
 	for {
 		select {
 		case update := <-subscriber.Updates():
-			if err := sendX509SVIDResponse(update, stream, log); err != nil {
+			if err := sendX509SVIDResponse(update, stream, log, quietLogging); err != nil {
 				return err
 			}
 		case <-ctx.Done():
@@ -198,9 +205,11 @@ func (h *Handler) FetchX509SVID(_ *workload.X509SVIDRequest, stream workload.Spi
 	}
 }
 
-func sendX509SVIDResponse(update *cache.WorkloadUpdate, stream workload.SpiffeWorkloadAPI_FetchX509SVIDServer, log logrus.FieldLogger) (err error) {
+func sendX509SVIDResponse(update *cache.WorkloadUpdate, stream workload.SpiffeWorkloadAPI_FetchX509SVIDServer, log logrus.FieldLogger, quietLogging bool) (err error) {
 	if len(update.Identities) == 0 {
-		log.WithField(telemetry.Registered, false).Error("No identity issued")
+		if !quietLogging {
+			log.WithField(telemetry.Registered, false).Error("No identity issued")
+		}
 		return status.Error(codes.PermissionDenied, "no identity issued")
 	}
 
@@ -222,12 +231,14 @@ func sendX509SVIDResponse(update *cache.WorkloadUpdate, stream workload.SpiffeWo
 	// log and emit telemetry on each SVID
 	// a response has already been sent so nothing is
 	// blocked on this logic
-	for i, svid := range resp.Svids {
-		ttl := time.Until(update.Identities[i].SVID[0].NotAfter)
-		log.WithFields(logrus.Fields{
-			telemetry.SPIFFEID: svid.SpiffeId,
-			telemetry.TTL:      ttl.Seconds(),
-		}).Debug("Fetched X.509 SVID")
+	if !quietLogging {
+		for i, svid := range resp.Svids {
+			ttl := time.Until(update.Identities[i].SVID[0].NotAfter)
+			log.WithFields(logrus.Fields{
+				telemetry.SPIFFEID: svid.SpiffeId,
+				telemetry.TTL:      ttl.Seconds(),
+			}).Debug("Fetched X.509 SVID")
+		}
 	}
 
 	return nil
@@ -343,7 +354,7 @@ func structFromValues(values map[string]interface{}) (*structpb.Struct, error) {
 	}
 
 	s := new(structpb.Struct)
-	if err := jsonpb.Unmarshal(bytes.NewReader(valuesJSON), s); err != nil {
+	if err := protojson.Unmarshal(valuesJSON, s); err != nil {
 		return nil, errs.Wrap(err)
 	}
 

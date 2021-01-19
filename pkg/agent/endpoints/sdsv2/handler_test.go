@@ -13,7 +13,6 @@ import (
 	auth_v2 "github.com/envoyproxy/go-control-plane/envoy/api/v2/auth"
 	core_v2 "github.com/envoyproxy/go-control-plane/envoy/api/v2/core"
 	sds_v2 "github.com/envoyproxy/go-control-plane/envoy/service/discovery/v2"
-	"github.com/golang/protobuf/ptypes"
 	"github.com/sirupsen/logrus/hooks/test"
 	"github.com/spiffe/spire/pkg/agent/manager/cache"
 	"github.com/spiffe/spire/pkg/common/api/middleware"
@@ -21,8 +20,8 @@ import (
 	"github.com/spiffe/spire/pkg/common/peertracker"
 	"github.com/spiffe/spire/pkg/common/pemutil"
 	"github.com/spiffe/spire/proto/spire/common"
+	"github.com/spiffe/spire/test/spiretest"
 	"github.com/stretchr/testify/require"
-	"github.com/stretchr/testify/suite"
 	"google.golang.org/genproto/googleapis/rpc/status"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -142,11 +141,11 @@ MC2hK9d8Z5ENZc9lFW48vObdcHcHdHvAaA8z2GM02pDkTt5pgUvRHlsf
 )
 
 func TestHandler(t *testing.T) {
-	suite.Run(t, new(HandlerSuite))
+	spiretest.Run(t, new(HandlerSuite))
 }
 
 type HandlerSuite struct {
-	suite.Suite
+	spiretest.Suite
 	manager  *FakeManager
 	server   *grpc.Server
 	handler  sds_v2.SecretDiscoveryServiceClient
@@ -288,9 +287,8 @@ func (s *HandlerSuite) TestStreamSecretsUnknownResource() {
 	s.sendAndWait(stream, &api_v2.DiscoveryRequest{
 		ResourceNames: []string{"spiffe://domain.test/WHATEVER"},
 	})
-	resp, err := stream.Recv()
-	s.Require().NoError(err)
-	s.requireSecrets(resp)
+	_, err = stream.Recv()
+	s.Require().Error(err)
 }
 
 func (s *HandlerSuite) TestStreamSecretsStreaming() {
@@ -480,14 +478,10 @@ func (s *HandlerSuite) TestFetchSecrets() {
 	s.requireSecrets(resp, workloadTLSCertificate1)
 
 	// Fetch non-existent resource
-	resp, err = s.handler.FetchSecrets(context.Background(), &api_v2.DiscoveryRequest{
+	_, err = s.handler.FetchSecrets(context.Background(), &api_v2.DiscoveryRequest{
 		ResourceNames: []string{"spiffe://domain.test/other"},
 	})
-	s.Require().NoError(err)
-	s.Require().NotNil(resp)
-	s.Require().Empty(resp.VersionInfo)
-	s.Require().Empty(resp.Nonce)
-	s.requireSecrets(resp)
+	s.Require().Error(err)
 }
 
 func (s *HandlerSuite) setWorkloadUpdate(workloadCert *x509.Certificate) {
@@ -527,11 +521,11 @@ func (s *HandlerSuite) requireSecrets(resp *api_v2.DiscoveryResponse, expectedSe
 	var actualSecrets []*auth_v2.Secret
 	for _, resource := range resp.Resources {
 		secret := new(auth_v2.Secret)
-		s.Require().NoError(ptypes.UnmarshalAny(resource, secret)) //nolint: scopelint // pointer to resource isn't held
+		s.Require().NoError(resource.UnmarshalTo(secret)) //nolint: scopelint // pointer to resource isn't held
 		actualSecrets = append(actualSecrets, secret)
 	}
 
-	s.Require().Equal(expectedSecrets, actualSecrets)
+	s.RequireProtoListEqual(expectedSecrets, actualSecrets)
 }
 
 type FakeAttestor []*common.Selector

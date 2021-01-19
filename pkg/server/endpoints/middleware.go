@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/golang/protobuf/ptypes/wrappers"
 	"github.com/sirupsen/logrus"
 	"github.com/spiffe/go-spiffe/v2/spiffeid"
 	"github.com/spiffe/spire/pkg/common/telemetry"
@@ -23,6 +22,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
 const (
@@ -81,13 +81,15 @@ func Authorization(log logrus.FieldLogger, ds datastore.DataStore, clk clock.Clo
 		"/spire.api.server.agent.v1.Agent/AttestAgent":                  any,
 		"/spire.api.server.agent.v1.Agent/RenewAgent":                   agent,
 		"/spire.api.server.agent.v1.Agent/CreateJoinToken":              localOrAdmin,
+		"/grpc.health.v1.Health/Check":                                  local,
+		"/grpc.health.v1.Health/Watch":                                  local,
 	}
 }
 
 func EntryFetcher(ds datastore.DataStore) middleware.EntryFetcher {
 	return middleware.EntryFetcherFunc(func(ctx context.Context, id spiffeid.ID) ([]*types.Entry, error) {
 		resp, err := ds.ListRegistrationEntries(ctx, &datastore.ListRegistrationEntriesRequest{
-			BySpiffeId: &wrappers.StringValue{
+			BySpiffeId: &wrapperspb.StringValue{
 				Value: id.String(),
 			},
 		})
@@ -100,7 +102,7 @@ func EntryFetcher(ds datastore.DataStore) middleware.EntryFetcher {
 
 func AuthorizedEntryFetcher(ds datastore.DataStore) api.AuthorizedEntryFetcher {
 	return api.AuthorizedEntryFetcherFunc(func(ctx context.Context, agentID spiffeid.ID) ([]*types.Entry, error) {
-		entries, err := regentryutil.FetchRegistrationEntries(ctx, ds, agentID.String())
+		entries, err := regentryutil.FetchRegistrationEntries(ctx, ds, agentID)
 		if err != nil {
 			return nil, err
 		}
@@ -114,7 +116,7 @@ func AuthorizedEntryFetcherWithCache(ds datastore.DataStore) (api.AuthorizedEntr
 		return nil, fmt.Errorf("could not create cache: %v", err)
 	}
 	return api.AuthorizedEntryFetcherFunc(func(ctx context.Context, agentID spiffeid.ID) ([]*types.Entry, error) {
-		entries, err := regentryutil.FetchRegistrationEntriesWithCache(ctx, ds, cache, agentID.String())
+		entries, err := regentryutil.FetchRegistrationEntriesWithCache(ctx, ds, cache, agentID)
 		if err != nil {
 			return nil, err
 		}
@@ -228,6 +230,8 @@ func RateLimits(config RateLimitConfig) map[string]api.RateLimiter {
 		"/spire.api.server.agent.v1.Agent/AttestAgent":                  attestLimit,
 		"/spire.api.server.agent.v1.Agent/RenewAgent":                   csrLimit,
 		"/spire.api.server.agent.v1.Agent/CreateJoinToken":              noLimit,
+		"/grpc.health.v1.Health/Check":                                  noLimit,
+		"/grpc.health.v1.Health/Watch":                                  noLimit,
 	}
 }
 
