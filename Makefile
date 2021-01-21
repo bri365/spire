@@ -170,6 +170,7 @@ serviceprotos := \
 	proto/spire/server/nodeattestor/nodeattestor.proto \
 	proto/spire/server/noderesolver/noderesolver.proto \
 	proto/spire/server/notifier/notifier.proto \
+	proto/spire/server/store/store.proto \
 	proto/spire/server/upstreamauthority/upstreamauthority.proto \
 	proto/spire/api/agent/debug/v1/debug.proto \
 	proto/spire/api/server/agent/v1/agent.proto \
@@ -191,7 +192,7 @@ plugingen_plugins = \
 	proto/spire/server/notifier/notifier.proto,pkg/server/plugin/notifier,Notifier \
 	proto/spire/server/nodeattestor/nodeattestor.proto,pkg/server/plugin/nodeattestor,NodeAttestor \
 	proto/spire/server/datastore/datastore.proto,pkg/server/plugin/datastore,DataStore \
-	proto/spire/server/store/datastore.proto,pkg/server/plugin/store,Store \
+	proto/spire/server/store/store.proto,pkg/server/plugin/store,Store \
 	proto/spire/server/upstreamauthority/upstreamauthority.proto,pkg/server/plugin/upstreamauthority,UpstreamAuthority \
 	proto/spire/server/noderesolver/noderesolver.proto,pkg/server/plugin/noderesolver,NodeResolver \
 	proto/spire/server/keymanager/keymanager.proto,pkg/server/plugin/keymanager,KeyManager \
