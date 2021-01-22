@@ -14,6 +14,8 @@
 bundle.*.pem
 svid.*.key
 svid.*.pem
+server.err
+server.out
 
 # Ignore binaries built using go build either from the root of the repo or
 # within the respective main packages.

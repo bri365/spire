@@ -13,10 +13,14 @@ import (
 	"github.com/spiffe/spire/pkg/server/plugin/store"
 	spi "github.com/spiffe/spire/proto/spire/common/plugin"
 	"github.com/zeebo/errs"
+
+	"go.etcd.io/etcd/clientv3"
+	"go.etcd.io/etcd/pkg/transport"
+	"google.golang.org/grpc/grpclog"
 )
 
 const (
-	// PluginName for this plugin
+	// PluginName is the name of this Store plugin implementation
 	PluginName = "etcd"
 )
 
@@ -32,7 +36,7 @@ var (
 	etcdError = errs.Class("store-etcd")
 )
 
-// Plugin is a DataStore plugin implemented via a SQL database
+// Plugin is a Store plugin implemented via etcd
 type Plugin struct {
 	store.UnsafeStoreServer
 
@@ -45,7 +49,7 @@ func New() *Plugin {
 	return &Plugin{}
 }
 
-// BuiltIn for catalog plugins
+// BuiltIn designates this as a native plugins
 func BuiltIn() catalog.Plugin {
 	return builtin(New())
 }
@@ -55,24 +59,20 @@ func builtin(p *Plugin) catalog.Plugin {
 }
 
 // Configuration for the datastore
-// Pointer values are used to distinguish between "unset" and "zero" values
+// Pointers allow distinction between "unset" and "zero" values
 type configuration struct {
-	DatabaseType       string  `hcl:"database_type" json:"database_type"`
-	ConnectionString   string  `hcl:"connection_string" json:"connection_string"`
-	RoConnectionString string  `hcl:"ro_connection_string" json:"ro_connection_string"`
-	RootCAPath         string  `hcl:"root_ca_path" json:"root_ca_path"`
-	ClientCertPath     string  `hcl:"client_cert_path" json:"client_cert_path"`
-	ClientKeyPath      string  `hcl:"client_key_path" json:"client_key_path"`
-	ConnMaxLifetime    *string `hcl:"conn_max_lifetime" json:"conn_max_lifetime"`
-	MaxOpenConns       *int    `hcl:"max_open_conns" json:"max_open_conns"`
-	MaxIdleConns       *int    `hcl:"max_idle_conns" json:"max_idle_conns"`
-	DisableMigration   bool    `hcl:"disable_migration" json:"disable_migration"`
+	Endpoints      []string `hcl:"endpoints" json:"endpoints"`
+	RootCAPath     string   `hcl:"root_ca_path" json:"root_ca_path"`
+	ClientCertPath string   `hcl:"client_cert_path" json:"client_cert_path"`
+	ClientKeyPath  string   `hcl:"client_key_path" json:"client_key_path"`
+	DialTimeout    *int     `hcl:"dial_timeout" json:"dial_timeout"`
+	RequestTimeout *int     `hcl:"request_timeout" json:"request_timeout"`
 
 	// Undocumented flags
-	LogSQL bool `hcl:"log_sql" json:"log_sql"`
+	LogOps bool `hcl:"log_ops" json:"log_ops"`
 }
 
-// GetPluginInfo returns the etcd plugin
+// GetPluginInfo returns etcd plugin information
 func (*Plugin) GetPluginInfo(context.Context, *spi.GetPluginInfoRequest) (*spi.GetPluginInfoResponse, error) {
 	return &pluginInfo, nil
 }
@@ -83,18 +83,14 @@ func (st *Plugin) SetLogger(logger hclog.Logger) {
 }
 
 func (cfg *configuration) Validate() error {
-	if cfg.DatabaseType == "" {
-		return errors.New("database_type must be set")
-	}
-
-	if cfg.ConnectionString == "" {
-		return errors.New("connection_string must be set")
+	if len(cfg.Endpoints) == 0 {
+		return errors.New("At least one endpoint must be set")
 	}
 
 	return nil
 }
 
-// Configure parses HCL config payload into config struct, and opens new DB based on the result
+// Configure parses HCL config payload into config struct and opens etcd connection
 func (st *Plugin) Configure(ctx context.Context, req *spi.ConfigureRequest) (*spi.ConfigureResponse, error) {
 	config := &configuration{}
 	if err := hcl.Decode(config, req.Configuration); err != nil {
@@ -112,18 +108,37 @@ func (st *Plugin) Configure(ctx context.Context, req *spi.ConfigureRequest) (*sp
 		return nil, err
 	}
 
-	if config.RoConnectionString == "" {
-		return &spi.ConfigureResponse{}, nil
-	}
-
-	if err := st.openConnection(config, true); err != nil {
-		return nil, err
-	}
-
 	return &spi.ConfigureResponse{}, nil
 }
 
 func (st *Plugin) openConnection(config *configuration, isReadOnly bool) error {
+
+	tlsInfo := transport.TLSInfo{
+		KeyFile:        "../tf-etcd-vsphere/certs/client-key.pem",
+		CertFile:       "../tf-etcd-vsphere/certs/client.pem",
+		TrustedCAFile:  "../tf-etcd-vsphere/certs/ca.pem",
+		ClientCertAuth: true,
+	}
+
+	clientv3.SetLogger(grpclog.NewLoggerV2(os.Stderr, os.Stderr, os.Stderr))
+
+	tls, err := tlsInfo.ClientConfig()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	kvc, err := clientv3.New(clientv3.Config{
+		Endpoints:   endpoints,
+		DialTimeout: dialTimeout,
+		TLS:         tls,
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// make sure to close the client
+	// defer kvc.Close()
+
 	return nil
 }
 

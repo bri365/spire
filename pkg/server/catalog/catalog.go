@@ -36,12 +36,15 @@ import (
 	"github.com/spiffe/spire/pkg/server/plugin/notifier"
 	no_gcs_bundle "github.com/spiffe/spire/pkg/server/plugin/notifier/gcsbundle"
 	no_k8sbundle "github.com/spiffe/spire/pkg/server/plugin/notifier/k8sbundle"
+	"github.com/spiffe/spire/pkg/server/plugin/store"
+	st_etcd "github.com/spiffe/spire/pkg/server/plugin/store/etcd"
 	"github.com/spiffe/spire/pkg/server/plugin/upstreamauthority"
 	up_awspca "github.com/spiffe/spire/pkg/server/plugin/upstreamauthority/awspca"
 	up_awssecret "github.com/spiffe/spire/pkg/server/plugin/upstreamauthority/awssecret"
 	up_disk "github.com/spiffe/spire/pkg/server/plugin/upstreamauthority/disk"
 	up_spire "github.com/spiffe/spire/pkg/server/plugin/upstreamauthority/spire"
 	up_vault "github.com/spiffe/spire/pkg/server/plugin/upstreamauthority/vault"
+	ss "github.com/spiffe/spire/pkg/server/store"
 	spi "github.com/spiffe/spire/proto/spire/common/plugin"
 )
 
@@ -49,6 +52,8 @@ var (
 	builtIns = []catalog.Plugin{
 		// DataStores
 		ds_sql.BuiltIn(),
+		// Stores
+		st_etcd.BuiltIn(),
 		// NodeAttestors
 		na_aws_iid.BuiltIn(),
 		na_gcp_iit.BuiltIn(),
@@ -78,6 +83,7 @@ var (
 )
 
 type Catalog interface {
+	GetStore() store.Store
 	GetDataStore() datastore.DataStore
 	GetNodeAttestorNamed(name string) (nodeattestor.NodeAttestor, bool)
 	GetNodeResolverNamed(name string) (noderesolver.NodeResolver, bool)
@@ -108,6 +114,11 @@ func BuiltIns() []catalog.Plugin {
 	return append([]catalog.Plugin(nil), builtIns...)
 }
 
+type Store struct {
+	catalog.PluginInfo
+	store.Store
+}
+
 type DataStore struct {
 	catalog.PluginInfo
 	datastore.DataStore
@@ -124,8 +135,9 @@ type UpstreamAuthority struct {
 }
 
 type Plugins struct {
-	// DataStore is not filled directly by the catalog plugins
+	// DataStore and Store are not filled directly by the catalog plugins
 	DataStore DataStore `catalog:"-"`
+	Store     Store     `catalog:"-"`
 
 	NodeAttestors     map[string]nodeattestor.NodeAttestor
 	NodeResolvers     map[string]noderesolver.NodeResolver
@@ -135,6 +147,10 @@ type Plugins struct {
 }
 
 var _ Catalog = (*Plugins)(nil)
+
+func (p *Plugins) GetStore() store.Store {
+	return p.Store
+}
 
 func (p *Plugins) GetDataStore() datastore.DataStore {
 	return p.DataStore
@@ -179,6 +195,16 @@ type Repository struct {
 }
 
 func Load(ctx context.Context, config Config) (*Repository, error) {
+	// Strip out the Store plugin configuration and load the etcd plugin
+	// directly. This allows us to bypass gRPC and get rid of response limits.
+	storeConfig := config.PluginConfig[store.Type]
+	config.Log.Infof("store config %v", storeConfig)
+	delete(config.PluginConfig, store.Type)
+	st, err := loadEtcdStore(ctx, config.Log, storeConfig)
+	if err != nil {
+		return nil, err
+	}
+
 	// Strip out the Datastore plugin configuration and load the SQL plugin
 	// directly. This allows us to bypass gRPC and get rid of response limits.
 	dataStoreConfig := config.PluginConfig[datastore.Type]
@@ -211,6 +237,7 @@ func Load(ctx context.Context, config Config) (*Repository, error) {
 		return nil, err
 	}
 
+	p.DataStore.DataStore = ss.New(ds, st)
 	p.DataStore.DataStore = datastore_telemetry.WithMetrics(ds, config.Metrics)
 	p.DataStore.DataStore = dscache.New(p.DataStore.DataStore, clock.New())
 	p.KeyManager = keymanager_telemetry.WithMetrics(p.KeyManager, config.Metrics)
@@ -252,4 +279,37 @@ func loadSQLDataStore(ctx context.Context, log logrus.FieldLogger, datastoreConf
 		return nil, err
 	}
 	return ds, nil
+}
+
+func loadEtcdStore(ctx context.Context, log logrus.FieldLogger, storeConfig map[string]catalog.HCLPluginConfig) (*st_etcd.Plugin, error) {
+	switch {
+	case len(storeConfig) == 0:
+		return nil, errors.New("expecting a Store plugin")
+	case len(storeConfig) > 1:
+		return nil, errors.New("only one Store plugin is allowed")
+	}
+
+	etcdHCLConfig, ok := storeConfig[st_etcd.PluginName]
+	if !ok {
+		return nil, fmt.Errorf("pluggability for the Store is incomplete; only the built-in %q plugin is supported", st_etcd.PluginName)
+	}
+
+	etcdConfig, err := catalog.PluginConfigFromHCL(store.Type, st_etcd.PluginName, etcdHCLConfig)
+	if err != nil {
+		return nil, err
+	}
+
+	// Is the plugin external?
+	if etcdConfig.Path != "" {
+		return nil, fmt.Errorf("pluggability for the Store is incomplete; only the built-in %q plugin is supported", st_etcd.PluginName)
+	}
+
+	st := st_etcd.New()
+	st.SetLogger(common_log.NewHCLogAdapter(log, telemetry.PluginBuiltIn).Named(etcdConfig.Name))
+	if _, err := st.Configure(ctx, &spi.ConfigureRequest{
+		Configuration: etcdConfig.Data,
+	}); err != nil {
+		return nil, err
+	}
+	return st, nil
 }
