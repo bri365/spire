@@ -198,7 +198,6 @@ func Load(ctx context.Context, config Config) (*Repository, error) {
 	// Strip out the Store plugin configuration and load the etcd plugin
 	// directly. This allows us to bypass gRPC and get rid of response limits.
 	storeConfig := config.PluginConfig[store.Type]
-	config.Log.Infof("store config %v", storeConfig)
 	delete(config.PluginConfig, store.Type)
 	st, err := loadEtcdStore(ctx, config.Log, storeConfig)
 	if err != nil {

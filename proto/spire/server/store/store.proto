@@ -2,92 +2,92 @@ syntax = "proto3";
 package spire.server.store;
 option go_package = "github.com/spiffe/spire/proto/spire/server/store";
 
-import "google/protobuf/timestamp.proto";
-import "google/protobuf/wrappers.proto";
 import "spire/common/plugin/plugin.proto";
-import "spire/common/common.proto";
 
 message KeyValue {
-    bytes key = 1;
-    int64 create_revision = 2;
-    int64 mod_revision = 3;
-    int64 version = 4;
-    bytes value = 5;
+    // The requested or returned key.
+    string key = 1;
+
+    // The requested or returned value for the given key.
+    bytes value = 2;
+
+    // The returned revision of the store when the key was created.
+    int64 create_revision = 3;
+
+    // The returned revision of the store when the key was modified.
+    int64 mod_revision = 4;
+
+    // The returned version of the store for the requested operation.
+    int64 version = 5;
 }
 
-message GetRequest {
+message Range {
     // key is the first (or only) key requested.
-    // If end is not given, the request looks up only the single key.
-    bytes key = 1;
+    // If end is not given, the request affects only the single key.
+    string key = 1;
 
-    // end is the key following the last key to get for the range [key, end).
+    // end is the key following the last key to affect for the range [key, end).
     // If end is not given, the range is defined to contain only the key argument.
     // If end is one bit larger than the given key, then the range is all the keys
     // with the prefix (the given key).
     // If end is '\0', the range is all keys greater than or equal to the key argument.
-    bytes end = 2;
+    string end = 2;
+}
 
-    // limit is the maximum number of items returned for this request.
+message GetRequest {
+    Range range = 1;
+
+    // The maximum number of items returned for this request.
     // When limit is not present or <= 0, all items are returned, subject to size limits.
     int64 limit = 3;
 
-    // keys_only when set returns only the keys and not the values.
+    // When set returns only the keys and not the values.
     bool keys_only = 4;
 
-    // count_only when set returns only the count of the keys with the prefix.
+    // When set returns only the count of the keys with the prefix.
     bool count_only = 5;
 
-    // revision is the point-in-time of the store to use for the range.
+    // The point-in-time of the store to use for the range.
     // If revision is not present or <= 0, the request is over the current revision.
     int64 revision = 6;
 }
 
 message GetResponse {
-    // revision is the store revision when the request was applied.
+    // The store revision when the request was applied.
     int64 revision = 1;
 
     repeated KeyValue kvs = 2;
 
-    // more when true indicates there are more keys to return in the requested range.
+    // More when true indicates there are more keys to return in the requested range.
     bool more = 3;
 
-    // total is the number of keys within the range when requested.
+    // Total number of keys in the requested range.
     int64 total = 4;
   }
 
-  message PutRequest {
-    // key is the key, in bytes, to put into the store.
-    bytes key = 1;
+message PutRequest {
+    // KVs to be written; revision and version fields are ignored.
+    repeated KeyValue kvs = 1;
 
-    // value is the value, in bytes, to associate with the key in the store.
-    bytes value = 2;
-
-    // Expiration in seconds since unix epoch
-    int64 expiry = 3;
+    // Expiration in seconds since unix epoch, applied to all items
+    int64 expiry = 2;
 }
 
 message PutResponse {
-    // revision is the store revision after the request was applied.
+    // The store revision after the request was applied.
     int64 revision = 1;
 }
 
 message DeleteRequest {
-    // key is the first (or only) key to delete.
-    bytes key = 1;
-
-    // end is the key following the last key to delete for the range [key, end).
-    // If end is not given, the range is defined to contain only the key argument.
-    // If end is one bit larger than the given key, then the range is all the keys
-    // with the prefix (the given key).
-    // If end is '\0', the range is all keys greater than or equal to the key argument.
-    bytes end = 2;
+    // One or more ranges of keys to be deleted.
+    repeated Range ranges = 1;
 }
-  
+
 message DeleteResponse {
-    // revision is the store revision after the request was applied.
+    // The store revision after the request was applied.
     int64 revision = 1;
 
-    // deleted is the number of keys deleted by the delete range request.
+    // Releted is the number of keys deleted by the delete range request.
     int64 deleted = 2;
 }
 

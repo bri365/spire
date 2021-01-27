@@ -51,22 +51,22 @@ require (
 	github.com/opencontainers/go-digest v1.0.0-rc1 // indirect
 	github.com/opencontainers/image-spec v1.0.1 // indirect
 	github.com/prometheus/client_golang v1.4.0
+	github.com/roguesoftware/etcd v0.5.0-alpha.5.0.20210125183500-48db3947e4ae
 	github.com/shirou/gopsutil v2.18.12+incompatible
 	github.com/shirou/w32 v0.0.0-20160930032740-bb4de0191aa4 // indirect
 	github.com/sirupsen/logrus v1.4.2
 	github.com/spiffe/go-spiffe/v2 v2.0.0-beta.4
 	github.com/spiffe/spire/proto/spire v0.10.1
-	github.com/stretchr/testify v1.5.1
+	github.com/stretchr/testify v1.7.0
 	github.com/uber-go/tally v3.3.12+incompatible
 	github.com/zeebo/errs v1.2.2
-	go.etcd.io/etcd v0.5.0-alpha.5.0.20200819165624-17cef6e3e9d5
-	go.uber.org/atomic v1.4.0
+	go.uber.org/atomic v1.7.0
 	go.uber.org/goleak v0.10.0
 	golang.org/x/crypto v0.0.0-20200622213623-75b288015ac9
-	golang.org/x/net v0.0.0-20200324143707-d3edc9973b7e
-	golang.org/x/sys v0.0.0-20200331124033-c3d80250170d
+	golang.org/x/net v0.0.0-20201021035429-f5854403a974
+	golang.org/x/sys v0.0.0-20200930185726-fdedc70b468f
 	golang.org/x/time v0.0.0-20191024005414-555d28b269f0
-	golang.org/x/tools v0.0.0-20200331025713-a30bf2db82d4
+	golang.org/x/tools v0.0.0-20210106214847-113979e3529a
 	google.golang.org/api v0.29.0
 	google.golang.org/genproto v0.0.0-20200806141610-86f49bd18e98
 	google.golang.org/grpc v1.33.2

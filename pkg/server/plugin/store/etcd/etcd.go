@@ -4,7 +4,10 @@ package etcd
 import (
 	"context"
 	"errors"
+	"fmt"
+	"os"
 	"sync"
+	"time"
 
 	hclog "github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/hcl"
@@ -14,13 +17,13 @@ import (
 	spi "github.com/spiffe/spire/proto/spire/common/plugin"
 	"github.com/zeebo/errs"
 
-	"go.etcd.io/etcd/clientv3"
-	"go.etcd.io/etcd/pkg/transport"
+	"github.com/roguesoftware/etcd/clientv3"
+	"github.com/roguesoftware/etcd/pkg/transport"
 	"google.golang.org/grpc/grpclog"
 )
 
+// PluginName default values
 const (
-	// PluginName is the name of this Store plugin implementation
 	PluginName = "etcd"
 )
 
@@ -34,12 +37,16 @@ var (
 	}
 
 	etcdError = errs.Class("store-etcd")
+
+	dialTimeout    = 5 * time.Second
+	requestTimeout = 10 * time.Second
 )
 
 // Plugin is a Store plugin implemented via etcd
 type Plugin struct {
 	store.UnsafeStoreServer
 
+	c   *clientv3.Client
 	mu  sync.Mutex
 	log hclog.Logger
 }
@@ -92,72 +99,254 @@ func (cfg *configuration) Validate() error {
 
 // Configure parses HCL config payload into config struct and opens etcd connection
 func (st *Plugin) Configure(ctx context.Context, req *spi.ConfigureRequest) (*spi.ConfigureResponse, error) {
-	config := &configuration{}
-	if err := hcl.Decode(config, req.Configuration); err != nil {
+	st.log.Info("Configuring etcd store")
+	cfg := &configuration{}
+	if err := hcl.Decode(cfg, req.Configuration); err != nil {
 		return nil, err
 	}
 
-	if err := config.Validate(); err != nil {
+	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
+
+	if cfg.DialTimeout != nil {
+		dialTimeout = time.Duration(*cfg.DialTimeout) * time.Second
+	}
+
+	if cfg.RequestTimeout != nil {
+		requestTimeout = time.Duration(*cfg.RequestTimeout) * time.Second
+	}
+
+	// TODO set proper logging
+	clientv3.SetLogger(grpclog.NewLoggerV2(os.Stdout, os.Stdout, os.Stdout))
 
 	st.mu.Lock()
 	defer st.mu.Unlock()
 
-	if err := st.openConnection(config, false); err != nil {
+	if err := st.openConnection(cfg, false); err != nil {
 		return nil, err
 	}
 
 	return &spi.ConfigureResponse{}, nil
 }
 
-func (st *Plugin) openConnection(config *configuration, isReadOnly bool) error {
+func (st *Plugin) openConnection(cfg *configuration, isReadOnly bool) error {
+	if cfg.ClientCertPath == "" || cfg.ClientKeyPath == "" || cfg.RootCAPath == "" {
+		return errors.New("client_cert_path, client_key_path, and root_ca_path must be set")
+	}
 
 	tlsInfo := transport.TLSInfo{
-		KeyFile:        "../tf-etcd-vsphere/certs/client-key.pem",
-		CertFile:       "../tf-etcd-vsphere/certs/client.pem",
-		TrustedCAFile:  "../tf-etcd-vsphere/certs/ca.pem",
+		KeyFile:        cfg.ClientKeyPath,
+		CertFile:       cfg.ClientCertPath,
+		TrustedCAFile:  cfg.RootCAPath,
 		ClientCertAuth: true,
 	}
 
-	clientv3.SetLogger(grpclog.NewLoggerV2(os.Stderr, os.Stderr, os.Stderr))
-
 	tls, err := tlsInfo.ClientConfig()
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
-	kvc, err := clientv3.New(clientv3.Config{
-		Endpoints:   endpoints,
+	st.c, err = clientv3.New(clientv3.Config{
+		Endpoints:   cfg.Endpoints,
 		DialTimeout: dialTimeout,
 		TLS:         tls,
 	})
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
-	// make sure to close the client
-	// defer kvc.Close()
+	// TODO remove these tests
+	st.log.Info("Create")
+	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
+	_, err = st.Create(ctx, &store.PutRequest{
+		Kvs: []*store.KeyValue{{Key: "key1", Value: []byte("value1")}},
+	})
+	cancel()
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel = context.WithTimeout(context.Background(), requestTimeout)
+	_, err = st.Create(ctx, &store.PutRequest{
+		Kvs: []*store.KeyValue{
+			{Key: "key10", Value: []byte("value10")},
+			{Key: "key11", Value: []byte("value11")},
+		}})
+	cancel()
+	if err != nil {
+		return err
+	}
+
+	st.log.Info("Update")
+	ctx, cancel = context.WithTimeout(context.Background(), requestTimeout)
+	_, err = st.Update(ctx, &store.PutRequest{
+		Kvs: []*store.KeyValue{{Key: "key1", Value: []byte("value2")}},
+	})
+	cancel()
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel = context.WithTimeout(context.Background(), requestTimeout)
+	_, err = st.Update(ctx, &store.PutRequest{
+		Kvs: []*store.KeyValue{
+			{Key: "key10", Value: []byte("value10a")},
+			{Key: "key11", Value: []byte("value11a")},
+		}})
+	cancel()
+	if err != nil {
+		return err
+	}
+
+	st.log.Info("Get")
+	ctx, cancel = context.WithTimeout(context.Background(), requestTimeout)
+	res, err := st.Get(ctx, &store.GetRequest{
+		Range: &store.Range{Key: "key1"},
+	})
+	cancel()
+	if err != nil {
+		return err
+	}
+	msg := fmt.Sprintf("%d %d %v", res.Total, res.Revision, res.Kvs)
+	st.log.Info(msg)
+
+	ctx, cancel = context.WithTimeout(context.Background(), requestTimeout)
+	res, err = st.Get(ctx, &store.GetRequest{
+		Range: &store.Range{Key: "key1", End: "key2"},
+	})
+	cancel()
+	if err != nil {
+		return err
+	}
+	msg = fmt.Sprintf("%d %d %v", res.Total, res.Revision, res.Kvs)
+	st.log.Info(msg)
+
+	st.log.Info("Delete")
+	ctx, cancel = context.WithTimeout(context.Background(), requestTimeout)
+	_, err = st.Delete(ctx, &store.DeleteRequest{
+		Ranges: []*store.Range{{Key: "key1"}},
+	})
+	cancel()
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel = context.WithTimeout(context.Background(), requestTimeout)
+	_, err = st.Delete(ctx, &store.DeleteRequest{
+		Ranges: []*store.Range{{Key: "key1"}, {Key: "key10", End: "key12"}},
+	})
+	cancel()
+	if err != nil {
+		return err
+	}
 
 	return nil
 }
 
-// Create adds one or more new item(s) to etcd
-func (st *Plugin) Create(context.Context, *store.PutRequest) (*store.PutResponse, error) {
-	return nil, nil
-}
-
-// Delete removes one or more item(s) from etcd
-func (st *Plugin) Delete(context.Context, *store.DeleteRequest) (*store.DeleteResponse, error) {
-	return nil, nil
-}
-
 // Get retrieves one or more item(s) from etcd
-func (st *Plugin) Get(context.Context, *store.GetRequest) (*store.GetResponse, error) {
-	return nil, nil
+func (st *Plugin) Get(ctx context.Context, req *store.GetRequest) (*store.GetResponse, error) {
+	opts := []clientv3.OpOption{}
+	if req.Range.End != "" {
+		opts = append(opts, clientv3.WithRange(req.Range.End))
+	}
+
+	res, err := st.c.Get(ctx, req.Range.Key, opts...)
+	if err != nil {
+		return nil, err
+	}
+
+	kvs := []*store.KeyValue{}
+	for _, kv := range res.Kvs {
+		kvs = append(kvs, &store.KeyValue{
+			Key:            string(kv.Key),
+			Value:          kv.Value,
+			CreateRevision: kv.CreateRevision,
+			ModRevision:    kv.ModRevision,
+			Version:        kv.Version,
+		})
+	}
+	gr := &store.GetResponse{
+		Revision: res.Header.Revision,
+		Kvs:      kvs,
+		More:     res.More,
+		Total:    res.Count,
+	}
+
+	return gr, nil
+}
+
+// Create adds one or more new items to etcd as a single transaction.
+func (st *Plugin) Create(ctx context.Context, req *store.PutRequest) (*store.PutResponse, error) {
+	// Comparisons to verify keys do not already exist (modified revision is 0)
+	cmps := []clientv3.Cmp{}
+
+	// Operations to execute if all comparisons are true
+	ops := []clientv3.Op{}
+
+	for _, kv := range req.Kvs {
+		cmps = append(cmps, clientv3.Compare(clientv3.ModRevision(kv.Key), "=", 0))
+		ops = append(ops, clientv3.OpPut(kv.Key, string(kv.Value)))
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
+	t, err := st.c.Txn(ctx).
+		If(cmps...).
+		Then(ops...).
+		Commit()
+	cancel()
+	if err != nil {
+		return nil, err
+	}
+
+	return &store.PutResponse{Revision: t.Header.Revision}, nil
 }
 
 // Update modifies one or more existing etcd item(s)
-func (st *Plugin) Update(context.Context, *store.PutRequest) (*store.PutResponse, error) {
-	return nil, nil
+func (st *Plugin) Update(ctx context.Context, req *store.PutRequest) (*store.PutResponse, error) {
+	// Comparisons to verify keys do not already exist (modified revision is 0)
+	cmps := []clientv3.Cmp{}
+	// Operations to execute if all comparisons are true
+	ops := []clientv3.Op{}
+
+	for _, kv := range req.Kvs {
+		cmps = append(cmps, clientv3.Compare(clientv3.ModRevision(kv.Key), ">", 0))
+		ops = append(ops, clientv3.OpPut(kv.Key, string(kv.Value)))
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
+	t, err := st.c.Txn(ctx).
+		If(cmps...).
+		Then(ops...).
+		Commit()
+	cancel()
+	if err != nil {
+		return nil, err
+	}
+
+	return &store.PutResponse{Revision: t.Header.Revision}, nil
+}
+
+// Delete removes one or more item(s) from etcd
+func (st *Plugin) Delete(ctx context.Context, req *store.DeleteRequest) (*store.DeleteResponse, error) {
+	// Operations to execute
+	ops := []clientv3.Op{}
+	for _, r := range req.Ranges {
+		opts := []clientv3.OpOption{}
+		if r.End != "" {
+			opts = append(opts, clientv3.WithRange(r.End))
+		}
+		ops = append(ops, clientv3.OpDelete(r.Key, opts...))
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
+	t, err := st.c.Txn(ctx).
+		Then(ops...).
+		Commit()
+	cancel()
+	if err != nil {
+		return nil, err
+	}
+
+	return &store.DeleteResponse{Revision: t.Header.Revision}, nil
 }

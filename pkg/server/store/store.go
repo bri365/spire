@@ -10,10 +10,10 @@ import (
 // to coexist with the existing datastore API during prototyping.
 type Shim struct {
 	datastore.DataStore
-	st store.Store
+	store.Store
 }
 
 // New returns an initialized storage shim.
 func New(ds datastore.DataStore, st store.Store) *Shim {
-	return &Shim{DataStore: ds, st: st}
+	return &Shim{DataStore: ds, Store: st}
 }

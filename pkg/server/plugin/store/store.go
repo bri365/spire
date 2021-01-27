@@ -19,6 +19,7 @@ type GetResponse = store.GetResponse                           //nolint: golint
 type KeyValue = store.KeyValue                                 //nolint: golint
 type PutRequest = store.PutRequest                             //nolint: golint
 type PutResponse = store.PutResponse                           //nolint: golint
+type Range = store.Range                                       //nolint: golint
 type StoreClient = store.StoreClient                           //nolint: golint
 type StoreServer = store.StoreServer                           //nolint: golint
 type UnimplementedStoreServer = store.UnimplementedStoreServer //nolint: golint
