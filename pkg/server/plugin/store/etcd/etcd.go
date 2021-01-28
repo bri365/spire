@@ -172,6 +172,10 @@ func (st *Plugin) Get(ctx context.Context, req *store.GetRequest) (*store.GetRes
 		opts = append(opts, clientv3.WithRange(req.End))
 	}
 
+	if req.Limit != 0 {
+		opts = append(opts, clientv3.WithLimit(req.Limit))
+	}
+
 	res, err := st.c.Get(ctx, req.Key, opts...)
 	if err != nil {
 		return nil, err
