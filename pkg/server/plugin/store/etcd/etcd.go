@@ -4,7 +4,6 @@ package etcd
 import (
 	"context"
 	"errors"
-	"fmt"
 	"os"
 	"sync"
 	"time"
@@ -19,7 +18,9 @@ import (
 
 	"github.com/roguesoftware/etcd/clientv3"
 	"github.com/roguesoftware/etcd/pkg/transport"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/grpclog"
+	"google.golang.org/grpc/status"
 )
 
 // PluginName default values
@@ -156,102 +157,22 @@ func (st *Plugin) openConnection(cfg *configuration, isReadOnly bool) error {
 		return err
 	}
 
-	// TODO remove these tests
-	st.log.Info("Create")
-	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
-	_, err = st.Create(ctx, &store.PutRequest{
-		Kvs: []*store.KeyValue{{Key: "key1", Value: []byte("value1")}},
-	})
-	cancel()
-	if err != nil {
-		return err
-	}
-
-	ctx, cancel = context.WithTimeout(context.Background(), requestTimeout)
-	_, err = st.Create(ctx, &store.PutRequest{
-		Kvs: []*store.KeyValue{
-			{Key: "key10", Value: []byte("value10")},
-			{Key: "key11", Value: []byte("value11")},
-		}})
-	cancel()
-	if err != nil {
-		return err
-	}
-
-	st.log.Info("Update")
-	ctx, cancel = context.WithTimeout(context.Background(), requestTimeout)
-	_, err = st.Update(ctx, &store.PutRequest{
-		Kvs: []*store.KeyValue{{Key: "key1", Value: []byte("value2")}},
-	})
-	cancel()
-	if err != nil {
-		return err
-	}
-
-	ctx, cancel = context.WithTimeout(context.Background(), requestTimeout)
-	_, err = st.Update(ctx, &store.PutRequest{
-		Kvs: []*store.KeyValue{
-			{Key: "key10", Value: []byte("value10a")},
-			{Key: "key11", Value: []byte("value11a")},
-		}})
-	cancel()
-	if err != nil {
-		return err
-	}
-
-	st.log.Info("Get")
-	ctx, cancel = context.WithTimeout(context.Background(), requestTimeout)
-	res, err := st.Get(ctx, &store.GetRequest{
-		Range: &store.Range{Key: "key1"},
-	})
-	cancel()
-	if err != nil {
-		return err
-	}
-	msg := fmt.Sprintf("%d %d %v", res.Total, res.Revision, res.Kvs)
-	st.log.Info(msg)
-
-	ctx, cancel = context.WithTimeout(context.Background(), requestTimeout)
-	res, err = st.Get(ctx, &store.GetRequest{
-		Range: &store.Range{Key: "key1", End: "key2"},
-	})
-	cancel()
-	if err != nil {
-		return err
-	}
-	msg = fmt.Sprintf("%d %d %v", res.Total, res.Revision, res.Kvs)
-	st.log.Info(msg)
-
-	st.log.Info("Delete")
-	ctx, cancel = context.WithTimeout(context.Background(), requestTimeout)
-	_, err = st.Delete(ctx, &store.DeleteRequest{
-		Ranges: []*store.Range{{Key: "key1"}},
-	})
-	cancel()
-	if err != nil {
-		return err
-	}
-
-	ctx, cancel = context.WithTimeout(context.Background(), requestTimeout)
-	_, err = st.Delete(ctx, &store.DeleteRequest{
-		Ranges: []*store.Range{{Key: "key1"}, {Key: "key10", End: "key12"}},
-	})
-	cancel()
-	if err != nil {
-		return err
-	}
+	// err = st.sanity()
+	// if err != nil {
+	// 	return err
+	// }
 
 	return nil
 }
 
-// Get retrieves one or more item(s) from etcd
+// Get retrieves one or more item(s) by key range.
 func (st *Plugin) Get(ctx context.Context, req *store.GetRequest) (*store.GetResponse, error) {
 	opts := []clientv3.OpOption{}
-	if req.Range.End != "" {
-		opts = append(opts, clientv3.WithRange(req.Range.End))
+	if req.End != "" {
+		opts = append(opts, clientv3.WithRange(req.End))
 	}
 
-	res, err := st.c.Get(ctx, req.Range.Key, opts...)
+	res, err := st.c.Get(ctx, req.Key, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -276,7 +197,7 @@ func (st *Plugin) Get(ctx context.Context, req *store.GetRequest) (*store.GetRes
 	return gr, nil
 }
 
-// Create adds one or more new items to etcd as a single transaction.
+// Create adds one or more new items in a single transaction.
 func (st *Plugin) Create(ctx context.Context, req *store.PutRequest) (*store.PutResponse, error) {
 	// Comparisons to verify keys do not already exist (modified revision is 0)
 	cmps := []clientv3.Cmp{}
@@ -298,11 +219,15 @@ func (st *Plugin) Create(ctx context.Context, req *store.PutRequest) (*store.Put
 	if err != nil {
 		return nil, err
 	}
+	if !t.Succeeded {
+		// Already exists
+		return nil, status.Error(codes.AlreadyExists, "One or more items already exists")
+	}
 
 	return &store.PutResponse{Revision: t.Header.Revision}, nil
 }
 
-// Update modifies one or more existing etcd item(s)
+// Update modifies one or more existing item(s) in a single transaction.
 func (st *Plugin) Update(ctx context.Context, req *store.PutRequest) (*store.PutResponse, error) {
 	// Comparisons to verify keys do not already exist (modified revision is 0)
 	cmps := []clientv3.Cmp{}
@@ -327,7 +252,7 @@ func (st *Plugin) Update(ctx context.Context, req *store.PutRequest) (*store.Put
 	return &store.PutResponse{Revision: t.Header.Revision}, nil
 }
 
-// Delete removes one or more item(s) from etcd
+// Delete removes one or more item(s) in a single transaction.
 func (st *Plugin) Delete(ctx context.Context, req *store.DeleteRequest) (*store.DeleteResponse, error) {
 	// Operations to execute
 	ops := []clientv3.Op{}
@@ -349,4 +274,10 @@ func (st *Plugin) Delete(ctx context.Context, req *store.DeleteRequest) (*store.
 	}
 
 	return &store.DeleteResponse{Revision: t.Header.Revision}, nil
+}
+
+func (st *Plugin) close() {
+	if st.c != nil {
+		st.c.Close()
+	}
 }

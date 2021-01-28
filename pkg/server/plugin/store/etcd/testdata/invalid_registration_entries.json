@@ -1,0 +1,24 @@
+[
+  {
+    "selectors": [
+      {
+        "type": "Type",
+        "value": "Value"
+      }
+    ]
+  },
+  {
+    "selectors": [
+      {
+        "type": "Type",
+        "value": "Value"
+      }
+    ],
+    "spiffe_id": "SpiffeId",
+    "ttl": -5
+  },
+  {
+    "spiffe_id": "SpiffeId"
+  },
+  null
+]

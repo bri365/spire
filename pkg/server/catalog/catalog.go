@@ -236,7 +236,8 @@ func Load(ctx context.Context, config Config) (*Repository, error) {
 		return nil, err
 	}
 
-	p.DataStore.DataStore = ss.New(ds, st)
+	ss_logger := common_log.NewHCLogAdapter(config.Log, telemetry.PluginBuiltIn).Named("shim")
+	p.DataStore.DataStore = ss.New(ds, st, ss_logger)
 	p.DataStore.DataStore = datastore_telemetry.WithMetrics(ds, config.Metrics)
 	p.DataStore.DataStore = dscache.New(p.DataStore.DataStore, clock.New())
 	p.KeyManager = keymanager_telemetry.WithMetrics(p.KeyManager, config.Metrics)

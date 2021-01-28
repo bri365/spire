@@ -1,0 +1,13 @@
+#!/bin/bash
+
+set -e
+
+DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
+
+PKGDIR="${REPODIR}/pkg/server/plugin/store/etcd"
+
+log-debug "building etcd test harness..."
+(cd "${PKGDIR}"; go test -c -o "${DIR}"/etcd.test -ldflags "-X github.com/spiffe/spire/pkg/server/plugin/store/etcd.TestCA=test/ca.pem")
+
+log-debug "copying over test data..."
+cp -r "${PKGDIR}"/testdata .

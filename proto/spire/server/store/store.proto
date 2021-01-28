@@ -35,7 +35,16 @@ message Range {
 }
 
 message GetRequest {
-    Range range = 1;
+    // key is the first (or only) key requested.
+    // If end is not given, the request affects only the single key.
+    string key = 1;
+
+    // end is the key following the last key to affect for the range [key, end).
+    // If end is not given, the range is defined to contain only the key argument.
+    // If end is one bit larger than the given key, then the range is all the keys
+    // with the prefix (the given key).
+    // If end is '\0', the range is all keys greater than or equal to the key argument.
+    string end = 2;
 
     // The maximum number of items returned for this request.
     // When limit is not present or <= 0, all items are returned, subject to size limits.
