@@ -220,8 +220,7 @@ func (st *Plugin) Create(ctx context.Context, req *store.PutRequest) (*store.Put
 		return nil, err
 	}
 	if !t.Succeeded {
-		// Already exists
-		return nil, status.Error(codes.AlreadyExists, "One or more items already exists")
+		return nil, status.Error(codes.AlreadyExists, "store-etcd: record already exists")
 	}
 
 	return &store.PutResponse{Revision: t.Header.Revision}, nil
@@ -229,7 +228,7 @@ func (st *Plugin) Create(ctx context.Context, req *store.PutRequest) (*store.Put
 
 // Update modifies one or more existing item(s) in a single transaction.
 func (st *Plugin) Update(ctx context.Context, req *store.PutRequest) (*store.PutResponse, error) {
-	// Comparisons to verify keys do not already exist (modified revision is 0)
+	// Comparisons to verify keys already exist (modified revision > 0)
 	cmps := []clientv3.Cmp{}
 	// Operations to execute if all comparisons are true
 	ops := []clientv3.Op{}
@@ -248,15 +247,21 @@ func (st *Plugin) Update(ctx context.Context, req *store.PutRequest) (*store.Put
 	if err != nil {
 		return nil, err
 	}
+	if !t.Succeeded {
+		return nil, status.Error(codes.NotFound, "store-etcd: record not found")
+	}
 
 	return &store.PutResponse{Revision: t.Header.Revision}, nil
 }
 
 // Delete removes one or more item(s) in a single transaction.
 func (st *Plugin) Delete(ctx context.Context, req *store.DeleteRequest) (*store.DeleteResponse, error) {
+	// Comparisons to verify keys already exist (modified revision > 0)
+	cmps := []clientv3.Cmp{}
 	// Operations to execute
 	ops := []clientv3.Op{}
 	for _, r := range req.Ranges {
+		cmps = append(cmps, clientv3.Compare(clientv3.ModRevision(r.Key), ">", 0))
 		opts := []clientv3.OpOption{}
 		if r.End != "" {
 			opts = append(opts, clientv3.WithRange(r.End))
@@ -266,11 +271,15 @@ func (st *Plugin) Delete(ctx context.Context, req *store.DeleteRequest) (*store.
 
 	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
 	t, err := st.c.Txn(ctx).
+		If(cmps...).
 		Then(ops...).
 		Commit()
 	cancel()
 	if err != nil {
 		return nil, err
+	}
+	if !t.Succeeded {
+		return nil, status.Error(codes.NotFound, "store-etcd: record not found")
 	}
 
 	return &store.DeleteResponse{Revision: t.Header.Revision}, nil

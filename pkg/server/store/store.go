@@ -52,13 +52,31 @@ func (s *Shim) CreateBundle(ctx context.Context, req *datastore.CreateBundleRequ
 	return
 }
 
+// DeleteBundle removes the given bundle from the store
+// NOTE: A returned bundle is currently not consumed by any caller, so it is not provided.
+func (s *Shim) DeleteBundle(ctx context.Context, req *datastore.DeleteBundleRequest) (resp *datastore.DeleteBundleResponse, err error) {
+	if s.Store == nil {
+		resp, err = s.DataStore.DeleteBundle(ctx, req)
+	} else {
+		s.log.Info("Store DeleteBundle")
+		_, err = s.Store.Delete(ctx, &store.DeleteRequest{
+			Ranges: []*store.Range{{Key: fmt.Sprintf("b|%s", req.TrustDomainId)}},
+		})
+		if err == nil {
+			resp = &datastore.DeleteBundleResponse{
+				Bundle: &common.Bundle{},
+			}
+		}
+	}
+	return
+}
+
 // FetchBundle retrieves the given bundle by SpiffieID
 func (s *Shim) FetchBundle(ctx context.Context, req *datastore.FetchBundleRequest) (resp *datastore.FetchBundleResponse, err error) {
 	if s.Store == nil {
 		resp, err = s.DataStore.FetchBundle(ctx, req)
 	} else {
 		resp = &datastore.FetchBundleResponse{}
-
 		res, err := s.Store.Get(ctx, &store.GetRequest{
 			Key: fmt.Sprintf("b|%s", req.TrustDomainId),
 		})
@@ -66,7 +84,9 @@ func (s *Shim) FetchBundle(ctx context.Context, req *datastore.FetchBundleReques
 			if len(res.Kvs) == 1 {
 				bundle := &common.Bundle{}
 				err = proto.Unmarshal(res.Kvs[0].Value, bundle)
-				resp.Bundle = bundle
+				resp = &datastore.FetchBundleResponse{
+					Bundle: bundle,
+				}
 			} else if len(res.Kvs) > 1 {
 				return resp, fmt.Errorf("More than one bundle for %s", req.TrustDomainId)
 			}

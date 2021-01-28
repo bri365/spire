@@ -27,6 +27,7 @@ const (
 	_expiredNotAfterString = "2018-01-10T01:34:00+00:00"
 	_validNotAfterString   = "2018-01-10T01:36:00+00:00"
 	_middleTimeString      = "2018-01-10T01:35:00+00:00"
+	_alreadyExistsErrMsg   = "store-etcd: record already exists"
 	_notFoundErrMsg        = "store-etcd: record not found"
 )
 
@@ -95,11 +96,29 @@ func (s *PluginSuite) SetupTest() {
 	shim := ss.New(nil, s.st, ssLogger)
 	s.shim = *shim
 
-	// delete all keys from store
-	_, err := s.st.Delete(context.Background(), &store.DeleteRequest{
-		Ranges: []*store.Range{{Key: "A", End: "z"}},
+	// delete all keys from the store
+	res, err := s.st.Get(context.Background(), &store.GetRequest{
+		Key: "A",
+		End: "z",
 	})
-	s.Require().NoError(err)
+	if err != nil {
+		s.T().Log(err)
+	}
+
+	if len(res.Kvs) > 0 {
+		s.T().Logf("Deleting %d key(s) from store", len(res.Kvs))
+		ranges := []*store.Range{}
+		for _, kv := range res.Kvs {
+			ranges = append(ranges, &store.Range{Key: kv.Key})
+		}
+
+		_, err = s.st.Delete(context.Background(), &store.DeleteRequest{
+			Ranges: ranges,
+		})
+		if err != nil {
+			s.T().Log(err)
+		}
+	}
 }
 
 func (s *PluginSuite) TearDownTest() {
@@ -113,7 +132,7 @@ func (s *PluginSuite) newPlugin() store.Plugin {
 	s.etcdPlugin = p
 	s.LoadPlugin(builtin(p), &st)
 
-	s.T().Logf("Endpoints: %v", TestEndpoints)
+	// s.T().Logf("Endpoints: %v", TestEndpoints)
 
 	_, err := st.Configure(context.Background(), &spi.ConfigureRequest{
 		Configuration: `
@@ -137,6 +156,11 @@ func (s *PluginSuite) TestBundleCRUD() {
 	s.Require().NotNil(fresp)
 	s.Require().Nil(fresp.Bundle)
 
+	// delete non-existent
+	_, err = s.shim.DeleteBundle(ctx, &datastore.DeleteBundleRequest{TrustDomainId: "spiffe://foo"})
+	s.Equal(codes.NotFound, status.Code(err))
+	s.RequireGRPCStatus(err, codes.NotFound, _notFoundErrMsg)
+
 	// create
 	_, err = s.shim.CreateBundle(ctx, &datastore.CreateBundleRequest{
 		Bundle: bundle,
@@ -148,5 +172,6 @@ func (s *PluginSuite) TestBundleCRUD() {
 		Bundle: bundle,
 	})
 	s.Equal(codes.AlreadyExists, status.Code(err))
+	s.RequireGRPCStatus(err, codes.AlreadyExists, _alreadyExistsErrMsg)
 
 }
