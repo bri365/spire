@@ -170,6 +170,9 @@ func (s *Shim) ListBundles(ctx context.Context, req *datastore.ListBundlesReques
 	if p != nil {
 		limit = int64(p.PageSize)
 		if len(p.Token) > 0 {
+			if len(p.Token) < 12 || p.Token[0:2] != "b|" {
+				return nil, status.Errorf(codes.InvalidArgument, "could not parse token '%s'", p.Token)
+			}
 			// TODO one bit larger than token
 			key = fmt.Sprintf("%sA", p.Token)
 		}
@@ -198,6 +201,7 @@ func (s *Shim) ListBundles(ctx context.Context, req *datastore.ListBundlesReques
 		if len(resp.Bundles) == int(p.PageSize) {
 			p.Token = lastKey
 		}
+		resp.Pagination = p
 	}
 	return
 }

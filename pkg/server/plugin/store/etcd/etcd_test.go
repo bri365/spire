@@ -3,6 +3,7 @@ package etcd
 import (
 	"context"
 	"crypto/x509"
+	"fmt"
 	"testing"
 	"time"
 
@@ -20,8 +21,10 @@ import (
 	"github.com/spiffe/spire/test/spiretest"
 	testutil "github.com/spiffe/spire/test/util"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
 const (
@@ -92,6 +95,7 @@ func (s *PluginSuite) SetupSuite() {
 }
 
 func (s *PluginSuite) SetupTest() {
+	s.T().Log("SetupTest")
 	log, _ := common_log.NewLogger()
 	ssLogger := common_log.NewHCLogAdapter(log, telemetry.PluginBuiltIn).Named("shim")
 	s.st = s.newPlugin()
@@ -302,6 +306,165 @@ func (s *PluginSuite) TestBundleCRUD() {
 	s.Require().NoError(err)
 	s.Empty(lresp.Bundles)
 
+}
+
+func (s *PluginSuite) TestListBundlesWithPagination() {
+	bundle1 := bundleutil.BundleProtoFromRootCA("spiffe://bar", s.cert)
+	_, err := s.shim.CreateBundle(ctx, &datastore.CreateBundleRequest{
+		Bundle: bundle1,
+	})
+	s.Require().NoError(err)
+
+	bundle2 := bundleutil.BundleProtoFromRootCA("spiffe://baz", s.cert)
+	_, err = s.shim.CreateBundle(ctx, &datastore.CreateBundleRequest{
+		Bundle: bundle2,
+	})
+	s.Require().NoError(err)
+
+	bundle3 := bundleutil.BundleProtoFromRootCA("spiffe://example.org", s.cert)
+	_, err = s.shim.CreateBundle(ctx, &datastore.CreateBundleRequest{
+		Bundle: bundle3,
+	})
+	s.Require().NoError(err)
+
+	bundle4 := bundleutil.BundleProtoFromRootCA("spiffe://foo", s.cacert)
+	_, err = s.shim.CreateBundle(ctx, &datastore.CreateBundleRequest{
+		Bundle: bundle4,
+	})
+	s.Require().NoError(err)
+
+	tests := []struct {
+		name               string
+		pagination         *datastore.Pagination
+		byExpiresBefore    *wrapperspb.Int64Value
+		expectedList       []*common.Bundle
+		expectedPagination *datastore.Pagination
+		expectedErr        string
+	}{
+		{
+			name:         "no pagination",
+			expectedList: []*common.Bundle{bundle1, bundle2, bundle3, bundle4},
+		},
+		{
+			name: "page size bigger than items",
+			pagination: &datastore.Pagination{
+				PageSize: 5,
+			},
+			expectedList: []*common.Bundle{bundle1, bundle2, bundle3, bundle4},
+			expectedPagination: &datastore.Pagination{
+				Token:    "",
+				PageSize: 5,
+			},
+		},
+		{
+			name: "pagination page size is zero",
+			pagination: &datastore.Pagination{
+				PageSize: 0,
+			},
+			expectedErr: "rpc error: code = InvalidArgument desc = cannot paginate with pagesize = 0",
+		},
+		{
+			name: "bundles first page",
+			pagination: &datastore.Pagination{
+				Token:    "",
+				PageSize: 2,
+			},
+			expectedList: []*common.Bundle{bundle1, bundle2},
+			expectedPagination: &datastore.Pagination{
+				Token:    fmt.Sprintf("b|%s", bundle2.TrustDomainId),
+				PageSize: 2,
+			},
+		},
+		{
+			name: "bundles second page",
+			pagination: &datastore.Pagination{
+				Token:    fmt.Sprintf("b|%s", bundle2.TrustDomainId),
+				PageSize: 2,
+			},
+			expectedList: []*common.Bundle{bundle3, bundle4},
+			expectedPagination: &datastore.Pagination{
+				Token:    fmt.Sprintf("b|%s", bundle4.TrustDomainId),
+				PageSize: 2,
+			},
+		},
+		{
+			name:         "bundles third page",
+			expectedList: []*common.Bundle{},
+			pagination: &datastore.Pagination{
+				Token:    fmt.Sprintf("b|%s", bundle4.TrustDomainId),
+				PageSize: 2,
+			},
+			expectedPagination: &datastore.Pagination{
+				Token:    "",
+				PageSize: 2,
+			},
+		},
+		{
+			name:         "invalid token",
+			expectedList: []*common.Bundle{},
+			expectedErr:  "rpc error: code = InvalidArgument desc = could not parse token 'invalid token'",
+			pagination: &datastore.Pagination{
+				Token:    "invalid token",
+				PageSize: 2,
+			},
+			expectedPagination: &datastore.Pagination{
+				PageSize: 2,
+			},
+		},
+	}
+	for _, test := range tests {
+		test := test
+		s.T().Run(test.name, func(t *testing.T) {
+			resp, err := s.shim.ListBundles(ctx, &datastore.ListBundlesRequest{
+				Pagination: test.pagination,
+			})
+			if test.expectedErr != "" {
+				require.EqualError(t, err, test.expectedErr)
+				return
+			}
+			require.NoError(t, err)
+			require.NotNil(t, resp)
+
+			expectedResponse := &datastore.ListBundlesResponse{
+				Bundles:    test.expectedList,
+				Pagination: test.expectedPagination,
+			}
+			//s.T().Logf("response: %v", resp)
+			//s.T().Logf("expected: %v", expectedResponse)
+			spiretest.RequireProtoEqual(t, expectedResponse, resp)
+		})
+	}
+}
+
+func (s *PluginSuite) TestCountBundles() {
+	// Count empty bundles
+	resp, err := s.shim.CountBundles(ctx, &datastore.CountBundlesRequest{})
+	s.Require().NoError(err)
+	spiretest.RequireProtoEqual(s.T(), &datastore.CountBundlesResponse{Bundles: 0}, resp)
+
+	// Create bundles
+	bundle1 := bundleutil.BundleProtoFromRootCA("spiffe://example.org", s.cert)
+	_, err = s.shim.CreateBundle(ctx, &datastore.CreateBundleRequest{
+		Bundle: bundle1,
+	})
+	s.Require().NoError(err)
+
+	bundle2 := bundleutil.BundleProtoFromRootCA("spiffe://foo", s.cacert)
+	_, err = s.shim.CreateBundle(ctx, &datastore.CreateBundleRequest{
+		Bundle: bundle2,
+	})
+	s.Require().NoError(err)
+
+	bundle3 := bundleutil.BundleProtoFromRootCA("spiffe://bar", s.cert)
+	_, err = s.shim.CreateBundle(ctx, &datastore.CreateBundleRequest{
+		Bundle: bundle3,
+	})
+	s.Require().NoError(err)
+
+	// Count all
+	resp, err = s.shim.CountBundles(ctx, &datastore.CountBundlesRequest{})
+	s.Require().NoError(err)
+	spiretest.RequireProtoEqual(s.T(), &datastore.CountBundlesResponse{Bundles: 3}, resp)
 }
 
 // assertBundlesEqual asserts that the two bundle lists are equal independent
