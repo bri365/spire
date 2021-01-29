@@ -467,6 +467,106 @@ func (s *PluginSuite) TestCountBundles() {
 	spiretest.RequireProtoEqual(s.T(), &datastore.CountBundlesResponse{Bundles: 3}, resp)
 }
 
+func (s *PluginSuite) TestSetBundle() {
+	// create a couple of bundles for tests. the contents don't really matter
+	// as long as they are for the same trust domain but have different contents.
+	bundle := bundleutil.BundleProtoFromRootCA("spiffe://foo", s.cert)
+	bundle2 := bundleutil.BundleProtoFromRootCA("spiffe://foo", s.cacert)
+
+	// ensure the bundle does not exist (it shouldn't)
+	s.Require().Nil(s.fetchBundle("spiffe://foo"))
+
+	// set the bundle and make sure it is created
+	_, err := s.shim.SetBundle(ctx, &datastore.SetBundleRequest{
+		Bundle: bundle,
+	})
+	s.Require().NoError(err)
+	s.RequireProtoEqual(bundle, s.fetchBundle("spiffe://foo"))
+
+	// set the bundle and make sure it is updated
+	_, err = s.shim.SetBundle(ctx, &datastore.SetBundleRequest{
+		Bundle: bundle2,
+	})
+	s.Require().NoError(err)
+	s.RequireProtoEqual(bundle2, s.fetchBundle("spiffe://foo"))
+}
+
+func (s *PluginSuite) TestBundlePrune() {
+	// Setup
+	// Create new bundle with two cert (one valid and one expired)
+	bundle := bundleutil.BundleProtoFromRootCAs("spiffe://foo", []*x509.Certificate{s.cert, s.cacert})
+
+	// Add two JWT signing keys (one valid and one expired)
+	expiredKeyTime, err := time.Parse(time.RFC3339, _expiredNotAfterString)
+	s.Require().NoError(err)
+
+	nonExpiredKeyTime, err := time.Parse(time.RFC3339, _validNotAfterString)
+	s.Require().NoError(err)
+
+	// middleTime is a point between the two certs expiration time
+	middleTime, err := time.Parse(time.RFC3339, _middleTimeString)
+	s.Require().NoError(err)
+
+	bundle.JwtSigningKeys = []*common.PublicKey{
+		{NotAfter: expiredKeyTime.Unix()},
+		{NotAfter: nonExpiredKeyTime.Unix()},
+	}
+
+	// Store bundle in datastore
+	_, err = s.shim.CreateBundle(ctx, &datastore.CreateBundleRequest{Bundle: bundle})
+	s.Require().NoError(err)
+
+	// Prune
+	// prune non existent bundle should not return error, no bundle to prune
+	expiration := time.Now().Unix()
+	presp, err := s.shim.PruneBundle(ctx, &datastore.PruneBundleRequest{
+		TrustDomainId: "spiffe://notexistent",
+		ExpiresBefore: expiration,
+	})
+	s.NoError(err)
+	s.AssertProtoEqual(presp, &datastore.PruneBundleResponse{})
+
+	// prune fails if internal prune bundle fails. For instance, if all certs are expired
+	expiration = time.Now().Unix()
+	presp, err = s.shim.PruneBundle(ctx, &datastore.PruneBundleRequest{
+		TrustDomainId: bundle.TrustDomainId,
+		ExpiresBefore: expiration,
+	})
+	s.AssertGRPCStatus(err, codes.Unknown, "prune failed: would prune all certificates")
+	s.Nil(presp)
+
+	// prune should remove expired certs
+	presp, err = s.shim.PruneBundle(ctx, &datastore.PruneBundleRequest{
+		TrustDomainId: bundle.TrustDomainId,
+		ExpiresBefore: middleTime.Unix(),
+	})
+	s.NoError(err)
+	s.NotNil(presp)
+	s.True(presp.BundleChanged)
+
+	// Fetch and verify pruned bundle is the expected
+	expectedPrunedBundle := bundleutil.BundleProtoFromRootCAs("spiffe://foo", []*x509.Certificate{s.cert})
+	expectedPrunedBundle.JwtSigningKeys = []*common.PublicKey{{NotAfter: nonExpiredKeyTime.Unix()}}
+	fresp, err := s.shim.FetchBundle(ctx, &datastore.FetchBundleRequest{TrustDomainId: "spiffe://foo"})
+	s.Require().NoError(err)
+	s.AssertProtoEqual(expectedPrunedBundle, fresp.Bundle)
+}
+
+func (s *PluginSuite) fetchBundle(trustDomainID string) *common.Bundle {
+	resp, err := s.shim.FetchBundle(ctx, &datastore.FetchBundleRequest{
+		TrustDomainId: trustDomainID,
+	})
+	s.Require().NoError(err)
+	return resp.Bundle
+}
+
+func (s *PluginSuite) createBundle(trustDomainID string) {
+	_, err := s.shim.CreateBundle(ctx, &datastore.CreateBundleRequest{
+		Bundle: bundleutil.BundleProtoFromRootCA(trustDomainID, s.cert),
+	})
+	s.Require().NoError(err)
+}
+
 // assertBundlesEqual asserts that the two bundle lists are equal independent
 // of ordering.
 func assertBundlesEqual(t *testing.T, expected, actual []*common.Bundle) {

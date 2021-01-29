@@ -4,6 +4,7 @@ package store
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/spiffe/spire/pkg/common/bundleutil"
@@ -204,6 +205,68 @@ func (s *Shim) ListBundles(ctx context.Context, req *datastore.ListBundlesReques
 		resp.Pagination = p
 	}
 	return
+}
+
+// PruneBundle removes expired certs and keys from a bundle
+func (s *Shim) PruneBundle(ctx context.Context, req *datastore.PruneBundleRequest) (resp *datastore.PruneBundleResponse, err error) {
+	if s.Store == nil {
+		return s.DataStore.PruneBundle(ctx, req)
+	}
+
+	id := req.TrustDomainId
+	fr, ver, err := s.fetchBundle(ctx, &datastore.FetchBundleRequest{TrustDomainId: id})
+	if err != nil {
+		return nil, err
+	}
+
+	if fr.Bundle == nil {
+		// No bundle to prune
+		return &datastore.PruneBundleResponse{}, nil
+	}
+
+	// Prune
+	newBundle, changed, err := bundleutil.PruneBundle(fr.Bundle, time.Unix(req.ExpiresBefore, 0), s.log)
+	if err != nil {
+		return nil, fmt.Errorf("prune failed: %v", err)
+	}
+
+	// Update only if bundle was modified
+	if changed {
+		_, err := s.updateBundle(ctx, &datastore.UpdateBundleRequest{Bundle: newBundle}, ver)
+		if err != nil {
+			return nil, fmt.Errorf("unable to write new bundle: %v", err)
+		}
+	}
+
+	return &datastore.PruneBundleResponse{BundleChanged: changed}, nil
+}
+
+// SetBundle creates or updates the given bundle
+func (s *Shim) SetBundle(ctx context.Context, req *datastore.SetBundleRequest) (*datastore.SetBundleResponse, error) {
+	if s.Store == nil {
+		return s.DataStore.SetBundle(ctx, req)
+	}
+
+	bundle := req.Bundle
+	id := bundle.TrustDomainId
+	fr, ver, err := s.fetchBundle(ctx, &datastore.FetchBundleRequest{TrustDomainId: id})
+	if err != nil {
+		return nil, err
+	}
+
+	if fr.Bundle == nil {
+		_, err := s.CreateBundle(ctx, &datastore.CreateBundleRequest{Bundle: bundle})
+		if err != nil {
+			return nil, err
+		}
+		return &datastore.SetBundleResponse{Bundle: bundle}, nil
+	}
+
+	_, err = s.updateBundle(ctx, &datastore.UpdateBundleRequest{Bundle: bundle}, ver)
+	if err != nil {
+		return nil, err
+	}
+	return &datastore.SetBundleResponse{Bundle: bundle}, nil
 }
 
 // UpdateBundle replaces the existing bundle with new bundle elements
