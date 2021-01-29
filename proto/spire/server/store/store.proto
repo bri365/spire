@@ -17,7 +17,7 @@ message KeyValue {
     // The returned revision of the store when the key was modified.
     int64 mod_revision = 4;
 
-    // The returned version of the store for the requested operation.
+    // The returned version of the item for the requested operation.
     int64 version = 5;
 }
 
