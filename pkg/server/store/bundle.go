@@ -50,7 +50,7 @@ func (s *Shim) AppendBundle(ctx context.Context, req *datastore.AppendBundleRequ
 }
 
 // CountBundles retrieves the total number of bundles in the store.
-func (s *Shim) CountBundles(ctx context.Context, req *datastore.CountBundlesRequest) (resp *datastore.CountBundlesResponse, err error) {
+func (s *Shim) CountBundles(ctx context.Context, req *datastore.CountBundlesRequest) (*datastore.CountBundlesResponse, error) {
 	if s.Store == nil {
 		return s.DataStore.CountBundles(ctx, req)
 	}
@@ -59,8 +59,7 @@ func (s *Shim) CountBundles(ctx context.Context, req *datastore.CountBundlesRequ
 	if err != nil {
 		return nil, err
 	}
-	resp = &datastore.CountBundlesResponse{Bundles: int32(res.Total)}
-	return
+	return &datastore.CountBundlesResponse{Bundles: int32(res.Total)}, nil
 }
 
 // CreateBundle stores the given bundle
@@ -101,12 +100,11 @@ func (s *Shim) DeleteBundle(ctx context.Context, req *datastore.DeleteBundleRequ
 	_, err = s.Store.Delete(ctx, &store.DeleteRequest{
 		Ranges: []*store.Range{{Key: fmt.Sprintf("b|%s", trustDomainID)}},
 	})
-	if err == nil {
-		resp = &datastore.DeleteBundleResponse{
-			Bundle: &common.Bundle{},
-		}
+	if err != nil {
+		return nil, err
 	}
-	return
+
+	return &datastore.DeleteBundleResponse{Bundle: &common.Bundle{}}, nil
 }
 
 // FetchBundle retrieves the given bundle by SpiffieID
@@ -143,9 +141,7 @@ func (s *Shim) fetchBundle(ctx context.Context, req *datastore.FetchBundleReques
 		if err != nil {
 			return nil, 0, err
 		}
-		resp = &datastore.FetchBundleResponse{
-			Bundle: bundle,
-		}
+		resp.Bundle = bundle
 	} else if len(res.Kvs) > 1 {
 		return resp, 0, fmt.Errorf("More than one bundle for %s", req.TrustDomainId)
 	}
