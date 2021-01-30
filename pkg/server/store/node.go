@@ -33,25 +33,6 @@ func (s *Shim) CountAttestedNodes(ctx context.Context, req *datastore.CountAttes
 }
 
 // CreateAttestedNode stores the given attested node
-/*
-type AttestedNode struct {
-	// Node SPIFFE ID
-	SpiffeId string `protobuf:"bytes,1,opt,name=spiffe_id,json=spiffeId,proto3" json:"spiffe_id,omitempty"`
-	// Attestation data type
-	AttestationDataType string `protobuf:"bytes,2,opt,name=attestation_data_type,json=attestationDataType,proto3" json:"attestation_data_type,omitempty"`
-	// Node certificate serial number
-	CertSerialNumber string `protobuf:"bytes,3,opt,name=cert_serial_number,json=certSerialNumber,proto3" json:"cert_serial_number,omitempty"`
-	// Node certificate not_after (seconds since unix epoch)
-	CertNotAfter int64 `protobuf:"varint,4,opt,name=cert_not_after,json=certNotAfter,proto3" json:"cert_not_after,omitempty"`
-	// Node certificate serial number
-	NewCertSerialNumber string `protobuf:"bytes,5,opt,name=new_cert_serial_number,json=newCertSerialNumber,proto3" json:"new_cert_serial_number,omitempty"`
-	// Node certificate not_after (seconds since unix epoch)
-	NewCertNotAfter int64 `protobuf:"varint,6,opt,name=new_cert_not_after,json=newCertNotAfter,proto3" json:"new_cert_not_after,omitempty"`
-	// Node selectors
-	Selectors []*Selector `protobuf:"bytes,7,rep,name=selectors,proto3" json:"selectors,omitempty"`
-	// contains filtered or unexported fields
-}
-*/
 func (s *Shim) CreateAttestedNode(ctx context.Context, req *datastore.CreateAttestedNodeRequest) (*datastore.CreateAttestedNodeResponse, error) {
 	if s.Store == nil {
 		return s.DataStore.CreateAttestedNode(ctx, req)
@@ -73,6 +54,13 @@ func (s *Shim) CreateAttestedNode(ctx context.Context, req *datastore.CreateAtte
 	kvs = append(kvs, &store.KeyValue{Key: nodeExpKey(node.SpiffeId, node.CertNotAfter)})
 	kvs = append(kvs, &store.KeyValue{Key: nodeBanKey(node.SpiffeId, node.CertSerialNumber)})
 	kvs = append(kvs, &store.KeyValue{Key: nodeAdtKey(node.SpiffeId, node.AttestationDataType)})
+
+	// Create index records for selectors
+	for _, sel := range node.Selectors {
+		kvs = append(kvs, &store.KeyValue{Key: nodeSelKey(node.SpiffeId, sel)})
+	}
+
+	s.log.Info(fmt.Sprintf("CAN kvs %v", kvs))
 
 	_, err = s.Store.Create(ctx, &store.PutRequest{Kvs: kvs})
 	if err != nil {
@@ -170,9 +158,9 @@ func (s *Shim) ListAttestedNodes(ctx context.Context, req *datastore.ListAtteste
 	// appear either.
 	idMaps := []map[string]bool{}
 
-	// TODO ByAttestationType
+	// TODO ByAttestationType string
 
-	// TODO ByBanned
+	// TODO ByBanned wrapped bool
 
 	if req.ByExpiresBefore != nil {
 		s.log.Info(fmt.Sprintf("By expires before %d", req.ByExpiresBefore.Value))
@@ -183,7 +171,7 @@ func (s *Shim) ListAttestedNodes(ctx context.Context, req *datastore.ListAtteste
 		idMaps = append(idMaps, ids)
 	}
 
-	// TODO BySelectorMatch
+	// TODO BySelectorMatch *BySelectors
 
 	count := len(idMaps)
 	s.log.Info(fmt.Sprintf("%d node list(s) in idMaps", count))
@@ -225,6 +213,8 @@ func (s *Shim) ListAttestedNodes(ctx context.Context, req *datastore.ListAtteste
 	if count > 0 {
 		// Get the specified list of nodes
 		// NOTE: looping will not scale to desired limits; these should be served from cache
+		// An interim approach would be to send batches of reads as a single transaction. Batches
+		// would be PageSize if paginated or a few hundred to a thousand at a time.
 		var i int64 = 1
 		for id := range idMaps[0] {
 			if p != nil && len(p.Token) > 0 && id < p.Token {
@@ -319,7 +309,7 @@ func nodeKey(id string) string {
 // nodeAdtKey returns a string formatted key for an attested node indexed by attestation data type
 func nodeAdtKey(id, adt string) string {
 	// e.g. "IN|ADT|aws-tag|spiffie://example.com/clusterA/nodeN"
-	return fmt.Sprintf("%s%s%s%s%s%s%s", indexKeyID, nodePrefix, BAN, delim, adt, delim, id)
+	return fmt.Sprintf("%s%s%s%s%s%s%s", indexKeyID, nodePrefix, ADT, delim, adt, delim, id)
 }
 
 // nodeAdtID returns the attested node id from the given attestation data type index key
@@ -387,4 +377,10 @@ func (s *Shim) nodeExpMap(ctx context.Context, exp int64) (map[string]bool, erro
 	}
 
 	return ids, nil
+}
+
+// nodeSelKey returns a string formatted key for an attested node indexed by selector type and value
+func nodeSelKey(id string, s *common.Selector) string {
+	// e.g. "IN|TVS|type|value|spiffie://example.com/clusterA/nodeN"
+	return fmt.Sprintf("%s%s%s%s%s%s%s%s%s", indexKeyID, nodePrefix, TVS, delim, s.Type, delim, s.Value, delim, id)
 }
