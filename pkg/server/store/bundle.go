@@ -55,7 +55,10 @@ func (s *Shim) CountBundles(ctx context.Context, req *datastore.CountBundlesRequ
 		return s.DataStore.CountBundles(ctx, req)
 	}
 
-	res, err := s.Store.Get(ctx, &store.GetRequest{Key: "b|", End: "c", CountOnly: true})
+	// Set range to all bundle keys
+	key := bundleKey("")
+	end := allBundles
+	res, err := s.Store.Get(ctx, &store.GetRequest{Key: key, End: end, CountOnly: true})
 	if err != nil {
 		return nil, err
 	}
@@ -68,18 +71,20 @@ func (s *Shim) CreateBundle(ctx context.Context, req *datastore.CreateBundleRequ
 		return s.DataStore.CreateBundle(ctx, req)
 	}
 
-	var v []byte
-	k := fmt.Sprintf("b|%s", req.Bundle.TrustDomainId)
+	// build the bundle key and value
+	k := bundleKey(req.Bundle.TrustDomainId)
 	v, err := proto.Marshal(req.Bundle)
 	if err != nil {
 		return nil, err
 	}
+
 	_, err = s.Store.Create(ctx, &store.PutRequest{
 		Kvs: []*store.KeyValue{{Key: k, Value: v}},
 	})
 	if err != nil {
 		return nil, err
 	}
+
 	return &datastore.CreateBundleResponse{Bundle: req.Bundle}, nil
 
 }
@@ -97,7 +102,7 @@ func (s *Shim) DeleteBundle(ctx context.Context, req *datastore.DeleteBundleRequ
 	}
 
 	_, err = s.Store.Delete(ctx, &store.DeleteRequest{
-		Ranges: []*store.Range{{Key: fmt.Sprintf("b|%s", trustDomainID)}},
+		Ranges: []*store.Range{{Key: bundleKey(trustDomainID)}},
 	})
 	if err != nil {
 		return nil, err
@@ -124,9 +129,7 @@ func (s *Shim) FetchBundle(ctx context.Context, req *datastore.FetchBundleReques
 
 // fetchBundle retrieves the given bundle by SpiffieID
 func (s *Shim) fetchBundle(ctx context.Context, req *datastore.FetchBundleRequest) (*datastore.FetchBundleResponse, int64, error) {
-	res, err := s.Store.Get(ctx, &store.GetRequest{
-		Key: fmt.Sprintf("b|%s", req.TrustDomainId),
-	})
+	res, err := s.Store.Get(ctx, &store.GetRequest{Key: bundleKey(req.TrustDomainId)})
 	if err != nil {
 		return nil, 0, err
 	}
@@ -158,19 +161,19 @@ func (s *Shim) ListBundles(ctx context.Context, req *datastore.ListBundlesReques
 	}
 
 	// Start with all bundle identifiers and limit of 0 (no limit)
-	key := "b|"
-	end := "c|"
+	key := bundleKey("")
+	end := allBundles
 	var limit int64
 
 	p := req.Pagination
 	if p != nil {
 		limit = int64(p.PageSize)
 		if len(p.Token) > 0 {
-			if len(p.Token) < 12 || p.Token[0:2] != "b|" {
+			if len(p.Token) < 12 || p.Token[0:2] != key {
 				return nil, status.Errorf(codes.InvalidArgument, "could not parse token '%s'", p.Token)
 			}
 			// TODO one bit larger than token
-			key = fmt.Sprintf("%sA", p.Token)
+			key = fmt.Sprintf("%s ", p.Token)
 		}
 	}
 
@@ -303,7 +306,7 @@ func (s *Shim) updateBundle(ctx context.Context, req *datastore.UpdateBundleRequ
 	}
 
 	var v []byte
-	k := fmt.Sprintf("b|%s", req.Bundle.TrustDomainId)
+	k := bundleKey(req.Bundle.TrustDomainId)
 	v, err = proto.Marshal(req.Bundle)
 	if err != nil {
 		return nil, err
@@ -315,4 +318,10 @@ func (s *Shim) updateBundle(ctx context.Context, req *datastore.UpdateBundleRequ
 		return nil, err
 	}
 	return &datastore.UpdateBundleResponse{Bundle: req.Bundle}, nil
+}
+
+// bundleKey returns a string formatted key for a bundle
+func bundleKey(id string) string {
+	// e.g. "B|spiffie://example.com"
+	return fmt.Sprintf("%s%s", bundlePrefix, id)
 }

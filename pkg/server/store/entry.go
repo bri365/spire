@@ -20,7 +20,10 @@ func (s *Shim) CountRegistrationEntries(ctx context.Context, req *datastore.Coun
 		return s.DataStore.CountRegistrationEntries(ctx, req)
 	}
 
-	res, err := s.Store.Get(ctx, &store.GetRequest{Key: "e|", End: "f", CountOnly: true})
+	// Set range to all entry keys
+	key := entryKey("")
+	end := allEntries
+	res, err := s.Store.Get(ctx, &store.GetRequest{Key: key, End: end, CountOnly: true})
 	if err != nil {
 		return nil, err
 	}
@@ -48,19 +51,19 @@ func (s *Shim) CreateRegistrationEntry(ctx context.Context, req *datastore.Creat
 		return nil, err
 	}
 
-	// Create entry record
-	k := fmt.Sprintf("e|%s", req.Entry.SpiffeId)
+	// Create entry record key and value
+	k := entryKey(req.Entry.SpiffeId)
 	v, err := proto.Marshal(req.Entry)
 	if err != nil {
 		return nil, err
 	}
+
+	// Create a list of items to add, starting with the registered entry
 	kvs := []*store.KeyValue{{Key: k, Value: v}}
 
-	// Create index records as needed
+	// Create index records for TODO
 
-	_, err = s.Store.Create(ctx, &store.PutRequest{
-		Kvs: kvs,
-	})
+	_, err = s.Store.Create(ctx, &store.PutRequest{Kvs: kvs})
 	if err != nil {
 		return nil, err
 	}
@@ -73,9 +76,7 @@ func (s *Shim) DeleteRegistrationEntry(ctx context.Context, req *datastore.Delet
 		return s.DataStore.DeleteRegistrationEntry(ctx, req)
 	}
 
-	_, err := s.Store.Delete(ctx, &store.DeleteRequest{
-		Ranges: []*store.Range{{Key: fmt.Sprintf("e|%s", req.EntryId)}},
-	})
+	_, err := s.Store.Delete(ctx, &store.DeleteRequest{Ranges: []*store.Range{{Key: entryKey(req.EntryId)}}})
 	if err != nil {
 		return nil, err
 	}
@@ -96,9 +97,7 @@ func (s *Shim) FetchRegistrationEntry(ctx context.Context, req *datastore.FetchR
 
 // fetchRegistrationEntry fetches an existing registration by entry ID
 func (s *Shim) fetchEntry(ctx context.Context, req *datastore.FetchRegistrationEntryRequest) (*datastore.FetchRegistrationEntryResponse, int64, error) {
-	res, err := s.Store.Get(ctx, &store.GetRequest{
-		Key: fmt.Sprintf("e|%s", req.EntryId),
-	})
+	res, err := s.Store.Get(ctx, &store.GetRequest{Key: entryKey(req.EntryId)})
 	if err != nil {
 		return nil, 0, err
 	}
@@ -132,6 +131,8 @@ func (s *Shim) ListRegistrationEntries(ctx context.Context, req *datastore.ListR
 		return nil, status.Error(codes.InvalidArgument, "cannot list by empty selector set")
 	}
 
+	// TODO
+
 	return
 }
 
@@ -142,6 +143,8 @@ func (s *Shim) PruneRegistrationEntries(ctx context.Context, req *datastore.Prun
 		return s.DataStore.PruneRegistrationEntries(ctx, req)
 	}
 
+	// TODO
+
 	return
 }
 
@@ -150,6 +153,8 @@ func (s *Shim) UpdateRegistrationEntry(ctx context.Context, req *datastore.Updat
 	if s.Store == nil {
 		return s.DataStore.UpdateRegistrationEntry(ctx, req)
 	}
+
+	// TODO
 
 	return
 }
@@ -180,4 +185,10 @@ func newRegistrationEntryID() (string, error) {
 		return "", err
 	}
 	return u.String(), nil
+}
+
+// entryKey returns a string formatted key for a registered entry
+func entryKey(id string) string {
+	// e.g. "E|5fee2e4a-1fe3-4bf3-b4f0-55eaf268c12a"
+	return fmt.Sprintf("%s%s", entryPrefix, id)
 }

@@ -22,9 +22,9 @@ func (s *Shim) CountAttestedNodes(ctx context.Context, req *datastore.CountAttes
 		return s.DataStore.CountAttestedNodes(ctx, req)
 	}
 
-	// Set range to all keys starting with the single character node prefix
+	// Set range to all node keys
 	key := nodeKey("")
-	end := string(key[0] + 1)
+	end := allNodes
 	res, err := s.Store.Get(ctx, &store.GetRequest{Key: key, End: end, CountOnly: true})
 	if err != nil {
 		return nil, err
@@ -59,7 +59,7 @@ func (s *Shim) CreateAttestedNode(ctx context.Context, req *datastore.CreateAtte
 
 	node := req.Node
 
-	// build the node key and value
+	// build the node record key and value
 	k := nodeKey(node.SpiffeId)
 	v, err := proto.Marshal(node)
 	if err != nil {
@@ -170,9 +170,9 @@ func (s *Shim) ListAttestedNodes(ctx context.Context, req *datastore.ListAtteste
 	// appear either.
 	idMaps := []map[string]bool{}
 
-	// ByAttestationType
+	// TODO ByAttestationType
 
-	// ByBanned
+	// TODO ByBanned
 
 	if req.ByExpiresBefore != nil {
 		s.log.Info(fmt.Sprintf("By expires before %d", req.ByExpiresBefore.Value))
@@ -183,7 +183,7 @@ func (s *Shim) ListAttestedNodes(ctx context.Context, req *datastore.ListAtteste
 		idMaps = append(idMaps, ids)
 	}
 
-	// BySelectorMatch
+	// TODO BySelectorMatch
 
 	count := len(idMaps)
 	s.log.Info(fmt.Sprintf("%d node list(s) in idMaps", count))
@@ -217,13 +217,14 @@ func (s *Shim) ListAttestedNodes(ctx context.Context, req *datastore.ListAtteste
 			if len(p.Token) < 12 || p.Token[0:2] != nodePrefix {
 				return nil, status.Errorf(codes.InvalidArgument, "could not parse token '%s'", p.Token)
 			}
-			// TODO one bit larger than token if this becomes problematic
-			key = fmt.Sprintf("%sA", p.Token)
+			// TODO one bit larger than token
+			key = fmt.Sprintf("%s ", p.Token)
 		}
 	}
 
 	if count > 0 {
 		// Get the specified list of nodes
+		// NOTE: looping will not scale to desired limits; these should be served from cache
 		var i int64 = 1
 		for id := range idMaps[0] {
 			if p != nil && len(p.Token) > 0 && id < p.Token {
@@ -249,12 +250,13 @@ func (s *Shim) ListAttestedNodes(ctx context.Context, req *datastore.ListAtteste
 			}
 		}
 	} else {
-		// Set range to all keys starting with the single character node prefix
-		end := string(key[0] + 1)
+		// No query constraints, get all nodes up to limit
+		end := allNodes
 		res, err := s.Store.Get(ctx, &store.GetRequest{Key: key, End: end, Limit: limit})
 		if err != nil {
 			return nil, err
 		}
+
 		for _, kv := range res.Kvs {
 			node := &common.AttestedNode{}
 			err = proto.Unmarshal(kv.Value, node)
@@ -273,7 +275,7 @@ func (s *Shim) UpdateAttestedNode(ctx context.Context, req *datastore.UpdateAtte
 	if s.Store == nil {
 		return s.DataStore.UpdateAttestedNode(ctx, req)
 	}
-
+	// TODO implement
 	return
 }
 
@@ -282,7 +284,7 @@ func (s *Shim) GetNodeSelectors(ctx context.Context, req *datastore.GetNodeSelec
 	if s.Store == nil {
 		return s.DataStore.GetNodeSelectors(ctx, req)
 	}
-
+	// TODO implement
 	return
 }
 
@@ -291,7 +293,7 @@ func (s *Shim) ListNodeSelectors(ctx context.Context, req *datastore.ListNodeSel
 	if s.Store == nil {
 		return s.DataStore.ListNodeSelectors(ctx, req)
 	}
-
+	// TODO implement
 	return
 }
 
@@ -304,7 +306,7 @@ func (s *Shim) SetNodeSelectors(ctx context.Context, req *datastore.SetNodeSelec
 	if req.Selectors == nil {
 		return nil, errors.New("invalid request: missing selectors")
 	}
-
+	// TODO implement
 	return
 }
 

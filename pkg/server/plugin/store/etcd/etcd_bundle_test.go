@@ -236,19 +236,19 @@ func (s *PluginSuite) TestListBundlesWithPagination() {
 			},
 			expectedList: []*common.Bundle{bundle1, bundle2},
 			expectedPagination: &datastore.Pagination{
-				Token:    fmt.Sprintf("b|%s", bundle2.TrustDomainId),
+				Token:    fmt.Sprintf("B|%s", bundle2.TrustDomainId),
 				PageSize: 2,
 			},
 		},
 		{
 			name: "bundles second page",
 			pagination: &datastore.Pagination{
-				Token:    fmt.Sprintf("b|%s", bundle2.TrustDomainId),
+				Token:    fmt.Sprintf("B|%s", bundle2.TrustDomainId),
 				PageSize: 2,
 			},
 			expectedList: []*common.Bundle{bundle3, bundle4},
 			expectedPagination: &datastore.Pagination{
-				Token:    fmt.Sprintf("b|%s", bundle4.TrustDomainId),
+				Token:    fmt.Sprintf("B|%s", bundle4.TrustDomainId),
 				PageSize: 2,
 			},
 		},
@@ -256,7 +256,7 @@ func (s *PluginSuite) TestListBundlesWithPagination() {
 			name:         "bundles third page",
 			expectedList: []*common.Bundle{},
 			pagination: &datastore.Pagination{
-				Token:    fmt.Sprintf("b|%s", bundle4.TrustDomainId),
+				Token:    fmt.Sprintf("B|%s", bundle4.TrustDomainId),
 				PageSize: 2,
 			},
 			expectedPagination: &datastore.Pagination{

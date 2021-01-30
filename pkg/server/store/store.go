@@ -59,7 +59,12 @@ var (
 	storeLoaded = false
 
 	// Key creation and comparison values
-	nodePrefix = fmt.Sprintf("%s%s", nodeKeyID, delim)
+	bundlePrefix = fmt.Sprintf("%s%s", bundleKeyID, delim)
+	entryPrefix  = fmt.Sprintf("%s%s", entryKeyID, delim)
+	nodePrefix   = fmt.Sprintf("%s%s", nodeKeyID, delim)
+	allBundles   = fmt.Sprintf("%s%s", bundleKeyID, string(delim[0]+1))
+	allEntries   = fmt.Sprintf("%s%s", entryKeyID, string(delim[0]+1))
+	allNodes     = fmt.Sprintf("%s%s", nodeKeyID, string(delim[0]+1))
 )
 
 // New returns an initialized storage shim.
