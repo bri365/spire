@@ -23,7 +23,7 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// PluginName default values
+// Plugin constant values
 const (
 	PluginName = "etcd"
 )

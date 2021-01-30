@@ -1,7 +1,19 @@
 // Package store implements a datastore shim
+//
+// Items are stored with a key string and the marshalled protobuf data as the value
+// Keys are formatted as <item key><delim><unique identifier>
+// e.g. "B|spiffie://example.com" for a bundle
+// or "E|5fee2e4a-1fe3-4bf3-b4f0-55eaf268c12a" for a registration entry
+//
+// Indices are stored with a Key string and no Value. Index keys are formatted as
+// <I><item key><delim><index field identifier>[...<delim><field value>]<delim><unique item identifier>
+// e.g. "IN|EXP|1611907252|spiffie://example.com/clusterA/nodeN" for an attested node expiry
+//
 package store
 
 import (
+	"fmt"
+
 	"github.com/hashicorp/go-hclog"
 	"github.com/spiffe/spire/pkg/server/plugin/datastore"
 	"github.com/spiffe/spire/pkg/server/plugin/store"
@@ -16,7 +28,39 @@ type Shim struct {
 	log hclog.Logger
 }
 
-var storeLoaded = false
+// Key creation constants for items and indices
+const (
+	// Key constructs - changing these will require migrating existing stored data
+	// NOTE: prefer a printable character not part of a conforming URI
+	delim = "|"
+
+	// Object identifiers
+	// NOTE: these could be an enum if readability is not valued for debugability
+	indexKeyID = "I"
+
+	bundleKeyID = "B"
+	entryKeyID  = "E"
+	nodeKeyID   = "N"
+	tokenKeyID  = "T"
+
+	// Index field identifiers
+	// NOTE: these could theoretically be reflected from protobufs but that feels like overkill
+	ADT = "ADT" // AttestationDataType
+	CNA = "CNA" // CertNotAfter
+	BAN = "BAN" // Banned (CertSerialNumber empty or not)
+	EXP = "EXP" // Expiry
+	PID = "PID" // ParentId
+	SID = "SID" // SpiffeId
+	TVR = "TVR" // Type-Value-RegisteredEntryID
+	TVS = "TVS" // Type-Value-SpiffieID
+)
+
+var (
+	storeLoaded = false
+
+	// Key creation and comparison values
+	nodePrefix = fmt.Sprintf("%s%s", nodeKeyID, delim)
+)
 
 // New returns an initialized storage shim.
 func New(ds datastore.DataStore, st store.Store, logger hclog.Logger) *Shim {

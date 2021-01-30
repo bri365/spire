@@ -63,31 +63,30 @@ func (s *Shim) CountBundles(ctx context.Context, req *datastore.CountBundlesRequ
 }
 
 // CreateBundle stores the given bundle
-func (s *Shim) CreateBundle(ctx context.Context, req *datastore.CreateBundleRequest) (resp *datastore.CreateBundleResponse, err error) {
+func (s *Shim) CreateBundle(ctx context.Context, req *datastore.CreateBundleRequest) (*datastore.CreateBundleResponse, error) {
 	if s.Store == nil {
 		return s.DataStore.CreateBundle(ctx, req)
 	}
 
 	var v []byte
 	k := fmt.Sprintf("b|%s", req.Bundle.TrustDomainId)
-	v, err = proto.Marshal(req.Bundle)
+	v, err := proto.Marshal(req.Bundle)
 	if err != nil {
-		return
+		return nil, err
 	}
 	_, err = s.Store.Create(ctx, &store.PutRequest{
 		Kvs: []*store.KeyValue{{Key: k, Value: v}},
 	})
-	if err == nil {
-		resp = &datastore.CreateBundleResponse{
-			Bundle: req.Bundle,
-		}
+	if err != nil {
+		return nil, err
 	}
-	return
+	return &datastore.CreateBundleResponse{Bundle: req.Bundle}, nil
+
 }
 
 // DeleteBundle removes the given bundle from the store
 // NOTE a returned bundle is currently not consumed by any caller, so it is not provided.
-func (s *Shim) DeleteBundle(ctx context.Context, req *datastore.DeleteBundleRequest) (resp *datastore.DeleteBundleResponse, err error) {
+func (s *Shim) DeleteBundle(ctx context.Context, req *datastore.DeleteBundleRequest) (*datastore.DeleteBundleResponse, error) {
 	if s.Store == nil {
 		return s.DataStore.DeleteBundle(ctx, req)
 	}
@@ -149,7 +148,7 @@ func (s *Shim) fetchBundle(ctx context.Context, req *datastore.FetchBundleReques
 }
 
 // ListBundles retrieves an optionally paginated list of all bundles.
-func (s *Shim) ListBundles(ctx context.Context, req *datastore.ListBundlesRequest) (resp *datastore.ListBundlesResponse, err error) {
+func (s *Shim) ListBundles(ctx context.Context, req *datastore.ListBundlesRequest) (*datastore.ListBundlesResponse, error) {
 	if s.Store == nil {
 		return s.DataStore.ListBundles(ctx, req)
 	}
@@ -181,7 +180,7 @@ func (s *Shim) ListBundles(ctx context.Context, req *datastore.ListBundlesReques
 	}
 
 	lastKey := ""
-	resp = &datastore.ListBundlesResponse{}
+	resp := &datastore.ListBundlesResponse{}
 	for _, kv := range res.Kvs {
 		b := &common.Bundle{}
 		err = proto.Unmarshal(kv.Value, b)
@@ -200,11 +199,11 @@ func (s *Shim) ListBundles(ctx context.Context, req *datastore.ListBundlesReques
 		}
 		resp.Pagination = p
 	}
-	return
+	return resp, nil
 }
 
 // PruneBundle removes expired certs and keys from a bundle
-func (s *Shim) PruneBundle(ctx context.Context, req *datastore.PruneBundleRequest) (resp *datastore.PruneBundleResponse, err error) {
+func (s *Shim) PruneBundle(ctx context.Context, req *datastore.PruneBundleRequest) (*datastore.PruneBundleResponse, error) {
 	if s.Store == nil {
 		return s.DataStore.PruneBundle(ctx, req)
 	}
@@ -266,7 +265,7 @@ func (s *Shim) SetBundle(ctx context.Context, req *datastore.SetBundleRequest) (
 }
 
 // UpdateBundle replaces the existing bundle with new bundle elements
-func (s *Shim) UpdateBundle(ctx context.Context, req *datastore.UpdateBundleRequest) (resp *datastore.UpdateBundleResponse, err error) {
+func (s *Shim) UpdateBundle(ctx context.Context, req *datastore.UpdateBundleRequest) (*datastore.UpdateBundleResponse, error) {
 	if s.Store == nil {
 		return s.DataStore.UpdateBundle(ctx, req)
 	}
@@ -276,7 +275,7 @@ func (s *Shim) UpdateBundle(ctx context.Context, req *datastore.UpdateBundleRequ
 
 // updateBundle replaces the existing bundle with one or more new elements
 // Implement opportunistic locking if given an object version from a previous read operation.
-func (s *Shim) updateBundle(ctx context.Context, req *datastore.UpdateBundleRequest, ver int64) (resp *datastore.UpdateBundleResponse, err error) {
+func (s *Shim) updateBundle(ctx context.Context, req *datastore.UpdateBundleRequest, ver int64) (*datastore.UpdateBundleResponse, error) {
 	id := req.Bundle.TrustDomainId
 	fr, err := s.FetchBundle(ctx, &datastore.FetchBundleRequest{TrustDomainId: id})
 	if err != nil {
@@ -307,15 +306,13 @@ func (s *Shim) updateBundle(ctx context.Context, req *datastore.UpdateBundleRequ
 	k := fmt.Sprintf("b|%s", req.Bundle.TrustDomainId)
 	v, err = proto.Marshal(req.Bundle)
 	if err != nil {
-		return
+		return nil, err
 	}
 	_, err = s.Store.Update(ctx, &store.PutRequest{
 		Kvs: []*store.KeyValue{{Key: k, Value: v, Version: ver}},
 	})
-	if err == nil {
-		resp = &datastore.UpdateBundleResponse{
-			Bundle: req.Bundle,
-		}
+	if err != nil {
+		return nil, err
 	}
-	return
+	return &datastore.UpdateBundleResponse{Bundle: req.Bundle}, nil
 }
