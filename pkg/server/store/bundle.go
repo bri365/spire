@@ -18,7 +18,8 @@ import (
 )
 
 // AppendBundle creates or updates the given bundle
-func (s *Shim) AppendBundle(ctx context.Context, req *datastore.AppendBundleRequest) (*datastore.AppendBundleResponse, error) {
+func (s *Shim) AppendBundle(ctx context.Context,
+	req *datastore.AppendBundleRequest) (*datastore.AppendBundleResponse, error) {
 	if s.Store == nil {
 		return s.DataStore.AppendBundle(ctx, req)
 	}
@@ -50,7 +51,8 @@ func (s *Shim) AppendBundle(ctx context.Context, req *datastore.AppendBundleRequ
 }
 
 // CountBundles retrieves the total number of bundles in the store.
-func (s *Shim) CountBundles(ctx context.Context, req *datastore.CountBundlesRequest) (*datastore.CountBundlesResponse, error) {
+func (s *Shim) CountBundles(ctx context.Context,
+	req *datastore.CountBundlesRequest) (*datastore.CountBundlesResponse, error) {
 	if s.Store == nil {
 		return s.DataStore.CountBundles(ctx, req)
 	}
@@ -66,7 +68,8 @@ func (s *Shim) CountBundles(ctx context.Context, req *datastore.CountBundlesRequ
 }
 
 // CreateBundle stores the given bundle
-func (s *Shim) CreateBundle(ctx context.Context, req *datastore.CreateBundleRequest) (*datastore.CreateBundleResponse, error) {
+func (s *Shim) CreateBundle(ctx context.Context,
+	req *datastore.CreateBundleRequest) (*datastore.CreateBundleResponse, error) {
 	if s.Store == nil {
 		return s.DataStore.CreateBundle(ctx, req)
 	}
@@ -91,7 +94,8 @@ func (s *Shim) CreateBundle(ctx context.Context, req *datastore.CreateBundleRequ
 
 // DeleteBundle removes the given bundle from the store
 // NOTE a returned bundle is currently not consumed by any caller, so it is not provided.
-func (s *Shim) DeleteBundle(ctx context.Context, req *datastore.DeleteBundleRequest) (*datastore.DeleteBundleResponse, error) {
+func (s *Shim) DeleteBundle(ctx context.Context,
+	req *datastore.DeleteBundleRequest) (*datastore.DeleteBundleResponse, error) {
 	if s.Store == nil {
 		return s.DataStore.DeleteBundle(ctx, req)
 	}
@@ -112,7 +116,8 @@ func (s *Shim) DeleteBundle(ctx context.Context, req *datastore.DeleteBundleRequ
 }
 
 // FetchBundle retrieves the given bundle by SpiffieID
-func (s *Shim) FetchBundle(ctx context.Context, req *datastore.FetchBundleRequest) (resp *datastore.FetchBundleResponse, err error) {
+func (s *Shim) FetchBundle(ctx context.Context,
+	req *datastore.FetchBundleRequest) (resp *datastore.FetchBundleResponse, err error) {
 	if s.Store == nil {
 		return s.DataStore.FetchBundle(ctx, req)
 	}
@@ -128,7 +133,8 @@ func (s *Shim) FetchBundle(ctx context.Context, req *datastore.FetchBundleReques
 }
 
 // fetchBundle retrieves the given bundle by SpiffieID
-func (s *Shim) fetchBundle(ctx context.Context, req *datastore.FetchBundleRequest) (*datastore.FetchBundleResponse, int64, error) {
+func (s *Shim) fetchBundle(ctx context.Context,
+	req *datastore.FetchBundleRequest) (*datastore.FetchBundleResponse, int64, error) {
 	res, err := s.Store.Get(ctx, &store.GetRequest{Key: bundleKey(req.TrustDomainId)})
 	if err != nil {
 		return nil, 0, err
@@ -151,7 +157,8 @@ func (s *Shim) fetchBundle(ctx context.Context, req *datastore.FetchBundleReques
 }
 
 // ListBundles retrieves an optionally paginated list of all bundles.
-func (s *Shim) ListBundles(ctx context.Context, req *datastore.ListBundlesRequest) (*datastore.ListBundlesResponse, error) {
+func (s *Shim) ListBundles(ctx context.Context,
+	req *datastore.ListBundlesRequest) (*datastore.ListBundlesResponse, error) {
 	if s.Store == nil {
 		return s.DataStore.ListBundles(ctx, req)
 	}
@@ -206,7 +213,8 @@ func (s *Shim) ListBundles(ctx context.Context, req *datastore.ListBundlesReques
 }
 
 // PruneBundle removes expired certs and keys from a bundle
-func (s *Shim) PruneBundle(ctx context.Context, req *datastore.PruneBundleRequest) (*datastore.PruneBundleResponse, error) {
+func (s *Shim) PruneBundle(ctx context.Context,
+	req *datastore.PruneBundleRequest) (*datastore.PruneBundleResponse, error) {
 	if s.Store == nil {
 		return s.DataStore.PruneBundle(ctx, req)
 	}
@@ -240,7 +248,8 @@ func (s *Shim) PruneBundle(ctx context.Context, req *datastore.PruneBundleReques
 }
 
 // SetBundle creates or updates the given bundle
-func (s *Shim) SetBundle(ctx context.Context, req *datastore.SetBundleRequest) (*datastore.SetBundleResponse, error) {
+func (s *Shim) SetBundle(ctx context.Context,
+	req *datastore.SetBundleRequest) (*datastore.SetBundleResponse, error) {
 	if s.Store == nil {
 		return s.DataStore.SetBundle(ctx, req)
 	}
@@ -268,7 +277,8 @@ func (s *Shim) SetBundle(ctx context.Context, req *datastore.SetBundleRequest) (
 }
 
 // UpdateBundle replaces the existing bundle with new bundle elements
-func (s *Shim) UpdateBundle(ctx context.Context, req *datastore.UpdateBundleRequest) (*datastore.UpdateBundleResponse, error) {
+func (s *Shim) UpdateBundle(ctx context.Context,
+	req *datastore.UpdateBundleRequest) (*datastore.UpdateBundleResponse, error) {
 	if s.Store == nil {
 		return s.DataStore.UpdateBundle(ctx, req)
 	}
@@ -278,7 +288,8 @@ func (s *Shim) UpdateBundle(ctx context.Context, req *datastore.UpdateBundleRequ
 
 // updateBundle replaces the existing bundle with one or more new elements
 // Implement opportunistic locking if given an object version from a previous read operation.
-func (s *Shim) updateBundle(ctx context.Context, req *datastore.UpdateBundleRequest, ver int64) (*datastore.UpdateBundleResponse, error) {
+func (s *Shim) updateBundle(ctx context.Context,
+	req *datastore.UpdateBundleRequest, ver int64) (*datastore.UpdateBundleResponse, error) {
 	id := req.Bundle.TrustDomainId
 	fr, err := s.FetchBundle(ctx, &datastore.FetchBundleRequest{TrustDomainId: id})
 	if err != nil {

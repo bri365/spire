@@ -31,7 +31,8 @@ type Shim struct {
 // Key creation constants for items and indices
 const (
 	// Key constructs - changing these will require migrating existing stored data
-	// NOTE: prefer a printable character not part of a conforming URI
+
+	// NOTE: prefer a printable character not part of a conforming URI for delimiter
 	delim = "|"
 
 	// Object identifiers
@@ -58,13 +59,17 @@ const (
 var (
 	storeLoaded = false
 
+	// NOTE: this is one bit greater than delimiter - it is used in range end to get
+	// all key values after the delimiter in the range key.
+	delend = string(delim[0] + 1)
+
 	// Key creation and comparison values
 	bundlePrefix = fmt.Sprintf("%s%s", bundleKeyID, delim)
 	entryPrefix  = fmt.Sprintf("%s%s", entryKeyID, delim)
 	nodePrefix   = fmt.Sprintf("%s%s", nodeKeyID, delim)
-	allBundles   = fmt.Sprintf("%s%s", bundleKeyID, string(delim[0]+1))
-	allEntries   = fmt.Sprintf("%s%s", entryKeyID, string(delim[0]+1))
-	allNodes     = fmt.Sprintf("%s%s", nodeKeyID, string(delim[0]+1))
+	allBundles   = fmt.Sprintf("%s%s", bundleKeyID, delend)
+	allEntries   = fmt.Sprintf("%s%s", entryKeyID, delend)
+	allNodes     = fmt.Sprintf("%s%s", nodeKeyID, delend)
 )
 
 // New returns an initialized storage shim.

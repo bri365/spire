@@ -15,7 +15,8 @@ import (
 )
 
 // CountRegistrationEntries counts all registrations
-func (s *Shim) CountRegistrationEntries(ctx context.Context, req *datastore.CountRegistrationEntriesRequest) (*datastore.CountRegistrationEntriesResponse, error) {
+func (s *Shim) CountRegistrationEntries(ctx context.Context,
+	req *datastore.CountRegistrationEntriesRequest) (*datastore.CountRegistrationEntriesResponse, error) {
 	if s.Store == nil {
 		return s.DataStore.CountRegistrationEntries(ctx, req)
 	}
@@ -31,7 +32,8 @@ func (s *Shim) CountRegistrationEntries(ctx context.Context, req *datastore.Coun
 }
 
 // CreateRegistrationEntry stores the given registration entry
-func (s *Shim) CreateRegistrationEntry(ctx context.Context, req *datastore.CreateRegistrationEntryRequest) (*datastore.CreateRegistrationEntryResponse, error) {
+func (s *Shim) CreateRegistrationEntry(ctx context.Context,
+	req *datastore.CreateRegistrationEntryRequest) (*datastore.CreateRegistrationEntryResponse, error) {
 	if s.Store == nil {
 		return s.DataStore.CreateRegistrationEntry(ctx, req)
 	}
@@ -71,11 +73,13 @@ func (s *Shim) CreateRegistrationEntry(ctx context.Context, req *datastore.Creat
 }
 
 // DeleteRegistrationEntry deletes the given registration
-func (s *Shim) DeleteRegistrationEntry(ctx context.Context, req *datastore.DeleteRegistrationEntryRequest) (*datastore.DeleteRegistrationEntryResponse, error) {
+func (s *Shim) DeleteRegistrationEntry(ctx context.Context,
+	req *datastore.DeleteRegistrationEntryRequest) (*datastore.DeleteRegistrationEntryResponse, error) {
 	if s.Store == nil {
 		return s.DataStore.DeleteRegistrationEntry(ctx, req)
 	}
 
+	// TODO delete index records
 	_, err := s.Store.Delete(ctx, &store.DeleteRequest{Ranges: []*store.Range{{Key: entryKey(req.EntryId)}}})
 	if err != nil {
 		return nil, err
@@ -85,7 +89,8 @@ func (s *Shim) DeleteRegistrationEntry(ctx context.Context, req *datastore.Delet
 }
 
 // FetchRegistrationEntry fetches an existing registration by entry ID
-func (s *Shim) FetchRegistrationEntry(ctx context.Context, req *datastore.FetchRegistrationEntryRequest) (resp *datastore.FetchRegistrationEntryResponse, err error) {
+func (s *Shim) FetchRegistrationEntry(ctx context.Context,
+	req *datastore.FetchRegistrationEntryRequest) (resp *datastore.FetchRegistrationEntryResponse, err error) {
 	if s.Store == nil {
 		return s.DataStore.FetchRegistrationEntry(ctx, req)
 	}
@@ -96,7 +101,8 @@ func (s *Shim) FetchRegistrationEntry(ctx context.Context, req *datastore.FetchR
 }
 
 // fetchRegistrationEntry fetches an existing registration by entry ID
-func (s *Shim) fetchEntry(ctx context.Context, req *datastore.FetchRegistrationEntryRequest) (*datastore.FetchRegistrationEntryResponse, int64, error) {
+func (s *Shim) fetchEntry(ctx context.Context,
+	req *datastore.FetchRegistrationEntryRequest) (*datastore.FetchRegistrationEntryResponse, int64, error) {
 	res, err := s.Store.Get(ctx, &store.GetRequest{Key: entryKey(req.EntryId)})
 	if err != nil {
 		return nil, 0, err
@@ -119,7 +125,8 @@ func (s *Shim) fetchEntry(ctx context.Context, req *datastore.FetchRegistrationE
 }
 
 // ListRegistrationEntries lists all registrations (pagination available)
-func (s *Shim) ListRegistrationEntries(ctx context.Context, req *datastore.ListRegistrationEntriesRequest) (resp *datastore.ListRegistrationEntriesResponse, err error) {
+func (s *Shim) ListRegistrationEntries(ctx context.Context,
+	req *datastore.ListRegistrationEntriesRequest) (resp *datastore.ListRegistrationEntriesResponse, err error) {
 	if s.Store == nil {
 		return s.DataStore.ListRegistrationEntries(ctx, req)
 	}
@@ -138,7 +145,8 @@ func (s *Shim) ListRegistrationEntries(ctx context.Context, req *datastore.ListR
 
 // PruneRegistrationEntries takes a registration entry message, and deletes all entries which have expired
 // before the date in the message
-func (s *Shim) PruneRegistrationEntries(ctx context.Context, req *datastore.PruneRegistrationEntriesRequest) (resp *datastore.PruneRegistrationEntriesResponse, err error) {
+func (s *Shim) PruneRegistrationEntries(ctx context.Context,
+	req *datastore.PruneRegistrationEntriesRequest) (resp *datastore.PruneRegistrationEntriesResponse, err error) {
 	if s.Store == nil {
 		return s.DataStore.PruneRegistrationEntries(ctx, req)
 	}
@@ -149,7 +157,8 @@ func (s *Shim) PruneRegistrationEntries(ctx context.Context, req *datastore.Prun
 }
 
 // UpdateRegistrationEntry updates an existing registration entry
-func (s *Shim) UpdateRegistrationEntry(ctx context.Context, req *datastore.UpdateRegistrationEntryRequest) (resp *datastore.UpdateRegistrationEntryResponse, err error) {
+func (s *Shim) UpdateRegistrationEntry(ctx context.Context,
+	req *datastore.UpdateRegistrationEntryRequest) (resp *datastore.UpdateRegistrationEntryResponse, err error) {
 	if s.Store == nil {
 		return s.DataStore.UpdateRegistrationEntry(ctx, req)
 	}

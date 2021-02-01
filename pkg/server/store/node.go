@@ -17,7 +17,8 @@ import (
 )
 
 // CountAttestedNodes counts all attested nodes
-func (s *Shim) CountAttestedNodes(ctx context.Context, req *datastore.CountAttestedNodesRequest) (*datastore.CountAttestedNodesResponse, error) {
+func (s *Shim) CountAttestedNodes(ctx context.Context,
+	req *datastore.CountAttestedNodesRequest) (*datastore.CountAttestedNodesResponse, error) {
 	if s.Store == nil {
 		return s.DataStore.CountAttestedNodes(ctx, req)
 	}
@@ -33,7 +34,8 @@ func (s *Shim) CountAttestedNodes(ctx context.Context, req *datastore.CountAttes
 }
 
 // CreateAttestedNode stores the given attested node
-func (s *Shim) CreateAttestedNode(ctx context.Context, req *datastore.CreateAttestedNodeRequest) (*datastore.CreateAttestedNodeResponse, error) {
+func (s *Shim) CreateAttestedNode(ctx context.Context,
+	req *datastore.CreateAttestedNodeRequest) (*datastore.CreateAttestedNodeResponse, error) {
 	if s.Store == nil {
 		return s.DataStore.CreateAttestedNode(ctx, req)
 	}
@@ -81,6 +83,7 @@ func (s *Shim) DeleteAttestedNode(ctx context.Context, req *datastore.DeleteAtte
 		return nil, err
 	}
 
+	// TODO delete index records
 	_, err = s.Store.Delete(ctx, &store.DeleteRequest{Ranges: []*store.Range{{Key: nodeKey(req.SpiffeId)}}})
 	if err != nil {
 		return nil, err
@@ -90,7 +93,8 @@ func (s *Shim) DeleteAttestedNode(ctx context.Context, req *datastore.DeleteAtte
 }
 
 // FetchAttestedNode fetches an existing attested node by SPIFFE ID
-func (s *Shim) FetchAttestedNode(ctx context.Context, req *datastore.FetchAttestedNodeRequest) (resp *datastore.FetchAttestedNodeResponse, err error) {
+func (s *Shim) FetchAttestedNode(ctx context.Context,
+	req *datastore.FetchAttestedNodeRequest) (resp *datastore.FetchAttestedNodeResponse, err error) {
 	if s.Store == nil {
 		return s.DataStore.FetchAttestedNode(ctx, req)
 	}
@@ -105,7 +109,8 @@ func (s *Shim) FetchAttestedNode(ctx context.Context, req *datastore.FetchAttest
 }
 
 // fetchNode fetches an existing attested node by SPIFFE ID along with the current version
-func (s *Shim) fetchNode(ctx context.Context, req *datastore.FetchAttestedNodeRequest) (*datastore.FetchAttestedNodeResponse, int64, error) {
+func (s *Shim) fetchNode(ctx context.Context,
+	req *datastore.FetchAttestedNodeRequest) (*datastore.FetchAttestedNodeResponse, int64, error) {
 	res, err := s.Store.Get(ctx, &store.GetRequest{Key: nodeKey(req.SpiffeId)})
 	if err != nil {
 		return nil, 0, err
@@ -159,8 +164,14 @@ func (s *Shim) ListAttestedNodes(ctx context.Context, req *datastore.ListAtteste
 	idMaps := []map[string]bool{}
 
 	// TODO ByAttestationType string
+	if req.ByAttestationType != "" {
+		s.log.Info(fmt.Sprintf("By attestation type %s", req.ByAttestationType))
+	}
 
 	// TODO ByBanned wrapped bool
+	if req.ByBanned != nil {
+		s.log.Info(fmt.Sprintf("By banned %t", req.ByBanned.Value))
+	}
 
 	if req.ByExpiresBefore != nil {
 		s.log.Info(fmt.Sprintf("By expires before %d", req.ByExpiresBefore.Value))
@@ -172,6 +183,9 @@ func (s *Shim) ListAttestedNodes(ctx context.Context, req *datastore.ListAtteste
 	}
 
 	// TODO BySelectorMatch *BySelectors
+	if req.BySelectorMatch != nil {
+		s.log.Info(fmt.Sprintf("By selector %v %v", req.BySelectorMatch.Match, req.BySelectorMatch.Selectors))
+	}
 
 	count := len(idMaps)
 	s.log.Info(fmt.Sprintf("%d node list(s) in idMaps", count))
@@ -321,6 +335,29 @@ func nodeAdtID(key string) (string, error) {
 	return items[3], nil
 }
 
+// nodeAdtList returns a map of attested node ids by attestation data type
+// The map facilitates easier intersection with other queries
+func (s *Shim) nodeAdtMap(ctx context.Context, adt string) (map[string]bool, error) {
+	key := fmt.Sprintf("%s%s%s%s%s%s", indexKeyID, nodePrefix, ADT, delim, adt, delim)
+	end := fmt.Sprintf("%s%s%s%s%s%s", indexKeyID, nodePrefix, ADT, delim, adt, delend)
+
+	res, err := s.Store.Get(ctx, &store.GetRequest{Key: key, End: end})
+	if err != nil {
+		return nil, err
+	}
+
+	ids := map[string]bool{}
+	for _, kv := range res.Kvs {
+		id, err := nodeAdtID(kv.Key)
+		if err != nil {
+			return nil, err
+		}
+		ids[id] = true
+	}
+
+	return ids, nil
+}
+
 // nodeBanKey returns a string formatted key for an attested node indexed by banned status
 func nodeBanKey(id, csn string) string {
 	// e.g. "IN|BAN|0|spiffie://example.com/clusterA/nodeN"
@@ -338,6 +375,33 @@ func nodeBanID(key string) (string, error) {
 		return "", fmt.Errorf("invalid node banned index key: %s", key)
 	}
 	return items[3], nil
+}
+
+// nodeBanList returns a map of attested node ids that are either banned or not
+// The map facilitates easier intersection with other queries
+func (s *Shim) nodeBanMap(ctx context.Context, ban bool) (map[string]bool, error) {
+	b := 0
+	if ban {
+		b = 1
+	}
+	key := fmt.Sprintf("%s%s%s%s%d%s", indexKeyID, nodePrefix, BAN, delim, b, delim)
+	end := fmt.Sprintf("%s%s%s%s%d", indexKeyID, nodePrefix, BAN, delim, b+1)
+
+	res, err := s.Store.Get(ctx, &store.GetRequest{Key: key, End: end})
+	if err != nil {
+		return nil, err
+	}
+
+	ids := map[string]bool{}
+	for _, kv := range res.Kvs {
+		id, err := nodeBanID(kv.Key)
+		if err != nil {
+			return nil, err
+		}
+		ids[id] = true
+	}
+
+	return ids, nil
 }
 
 // nodeExpKey returns a string formatted key for an attested node indexed by expiry in seconds
@@ -383,4 +447,40 @@ func (s *Shim) nodeExpMap(ctx context.Context, exp int64) (map[string]bool, erro
 func nodeSelKey(id string, s *common.Selector) string {
 	// e.g. "IN|TVS|type|value|spiffie://example.com/clusterA/nodeN"
 	return fmt.Sprintf("%s%s%s%s%s%s%s%s%s", indexKeyID, nodePrefix, TVS, delim, s.Type, delim, s.Value, delim, id)
+}
+
+// nodeSelID returns the attested node id from the given selector index key
+func nodeSelID(key string) (string, error) {
+	items := strings.Split(key, delim)
+	if len(items) != 5 {
+		return "", fmt.Errorf("invalid node selector index key: %s", key)
+	}
+	return items[4], nil
+}
+
+// nodeSelList returns a map of attested node ids by selector match
+// The map facilitates easier intersection with other queries
+func (s *Shim) nodeSelMap(ctx context.Context, bySel *datastore.BySelectors) (map[string]bool, error) {
+	//m := bySel.Match
+	//sels := bySel.Selectors
+
+	// TODO
+	key := fmt.Sprintf("%s%s%s%s%s%s", indexKeyID, nodePrefix, TVS, delim, "sel", delim)
+	end := fmt.Sprintf("%s%s%s%s%s%s", indexKeyID, nodePrefix, TVS, delim, "sel", delend)
+
+	res, err := s.Store.Get(ctx, &store.GetRequest{Key: key, End: end})
+	if err != nil {
+		return nil, err
+	}
+
+	ids := map[string]bool{}
+	for _, kv := range res.Kvs {
+		id, err := nodeSelID(kv.Key)
+		if err != nil {
+			return nil, err
+		}
+		ids[id] = true
+	}
+
+	return ids, nil
 }
