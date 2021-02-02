@@ -95,9 +95,8 @@ func (s *Shim) CreateBundle(ctx context.Context,
 		st := status.Convert(err)
 		if st.Code() == codes.Aborted {
 			return nil, status.Error(codes.AlreadyExists, "store-etcd: record already exists")
-		} else {
-			return nil, err
 		}
+		return nil, err
 	}
 
 	return &datastore.CreateBundleResponse{Bundle: req.Bundle}, nil
@@ -125,8 +124,10 @@ func (s *Shim) DeleteBundle(ctx context.Context,
 
 	_, err = s.Store.Set(ctx, &store.SetRequest{Elements: elements})
 	if err != nil {
-		// TODO get most accurate error possible
-		// st := status.Convert(err)
+		st := status.Convert(err)
+		if st.Code() == codes.Aborted {
+			return nil, status.Error(codes.NotFound, "store-etcd: record not found")
+		}
 		return nil, err
 	}
 

@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/golang/protobuf/proto"
@@ -19,6 +20,7 @@ import (
 // CountAttestedNodes counts all attested nodes
 func (s *Shim) CountAttestedNodes(ctx context.Context,
 	req *datastore.CountAttestedNodesRequest) (*datastore.CountAttestedNodesResponse, error) {
+
 	if s.Store == nil {
 		return s.DataStore.CountAttestedNodes(ctx, req)
 	}
@@ -26,23 +28,25 @@ func (s *Shim) CountAttestedNodes(ctx context.Context,
 	// Set range to all node keys
 	key := nodeKey("")
 	end := allNodes
+
 	res, err := s.Store.Get(ctx, &store.GetRequest{Key: key, End: end, CountOnly: true})
 	if err != nil {
 		return nil, err
 	}
+
 	return &datastore.CountAttestedNodesResponse{Nodes: int32(res.Total)}, nil
 }
 
 // CreateAttestedNode stores the given attested node
 func (s *Shim) CreateAttestedNode(ctx context.Context,
 	req *datastore.CreateAttestedNodeRequest) (*datastore.CreateAttestedNodeResponse, error) {
+
 	if s.Store == nil {
 		return s.DataStore.CreateAttestedNode(ctx, req)
 	}
 
-	node := req.Node
-
 	// build the node record key and value
+	node := req.Node
 	k := nodeKey(node.SpiffeId)
 	v, err := proto.Marshal(node)
 	if err != nil {
@@ -65,12 +69,11 @@ func (s *Shim) CreateAttestedNode(ctx context.Context,
 	// One put operation for this transaction
 	elements := []*store.SetRequestElement{{Operation: store.Operation_PUT, Kvs: kvs}}
 
-	s.log.Info(fmt.Sprintf("CAN elements %v", elements))
-
 	_, err = s.Store.Set(ctx, &store.SetRequest{Elements: elements})
 	if err != nil {
 		return nil, err
 	}
+
 	return &datastore.CreateAttestedNodeResponse{Node: node}, nil
 }
 
@@ -88,22 +91,22 @@ func (s *Shim) DeleteAttestedNode(ctx context.Context,
 		return nil, err
 	}
 
-	// build list of delete operations to be performed as a transaction, starting with the attested node
-	// at the exact version just read, and including the index keys at any version
+	// Build a list of delete operations to be performed as a transaction,
+	// starting with the attested node at the exact version read above.
 	node := fn.Node
-	kvs := []*store.KeyValue{{Key: node.SpiffeId, Version: ver, Compare: store.Compare_PRESENT}}
+	kvs := []*store.KeyValue{{Key: node.SpiffeId, Version: ver, Compare: store.Compare_EQUALS}}
 
-	// Create index records for expiry, banned, and attestation type
+	// Add index records for expiry, banned, and attestation type
 	kvs = append(kvs, &store.KeyValue{Key: nodeExpKey(node.SpiffeId, node.CertNotAfter)})
 	kvs = append(kvs, &store.KeyValue{Key: nodeBanKey(node.SpiffeId, node.CertSerialNumber)})
 	kvs = append(kvs, &store.KeyValue{Key: nodeAdtKey(node.SpiffeId, node.AttestationDataType)})
 
-	// Create index records for selectors
+	// Add index records for selectors
 	for _, sel := range node.Selectors {
 		kvs = append(kvs, &store.KeyValue{Key: nodeSelKey(node.SpiffeId, sel)})
 	}
 
-	// One put operation for this transaction
+	// One delete operation for all keys in the transaction
 	elements := []*store.SetRequestElement{{Operation: store.Operation_DELETE, Kvs: kvs}}
 
 	_, err = s.Store.Set(ctx, &store.SetRequest{Elements: elements})
@@ -117,6 +120,7 @@ func (s *Shim) DeleteAttestedNode(ctx context.Context,
 // FetchAttestedNode fetches an existing attested node by SPIFFE ID
 func (s *Shim) FetchAttestedNode(ctx context.Context,
 	req *datastore.FetchAttestedNodeRequest) (resp *datastore.FetchAttestedNodeResponse, err error) {
+
 	if s.Store == nil {
 		return s.DataStore.FetchAttestedNode(ctx, req)
 	}
@@ -133,6 +137,7 @@ func (s *Shim) FetchAttestedNode(ctx context.Context,
 // fetchNode fetches an existing attested node by SPIFFE ID along with the current version
 func (s *Shim) fetchNode(ctx context.Context,
 	req *datastore.FetchAttestedNodeRequest) (*datastore.FetchAttestedNodeResponse, int64, error) {
+
 	res, err := s.Store.Get(ctx, &store.GetRequest{Key: nodeKey(req.SpiffeId)})
 	if err != nil {
 		return nil, 0, err
@@ -151,12 +156,14 @@ func (s *Shim) fetchNode(ctx context.Context,
 	} else if len(res.Kvs) > 1 {
 		return resp, 0, fmt.Errorf("More than one node for %s", req.SpiffeId)
 	}
+
 	return resp, ver, nil
 }
 
 // ListAttestedNodes lists all attested nodes (pagination available)
 func (s *Shim) ListAttestedNodes(ctx context.Context,
 	req *datastore.ListAttestedNodesRequest) (*datastore.ListAttestedNodesResponse, error) {
+
 	if s.Store == nil {
 		return s.DataStore.ListAttestedNodes(ctx, req)
 	}
@@ -244,8 +251,14 @@ func (s *Shim) ListAttestedNodes(ctx context.Context,
 		}
 	}
 
+	// Create a sorted list of node IDs from resulting map
+	ids := []string{}
 	if count > 0 {
 		s.log.Info(fmt.Sprintf("idMaps[0] %v", idMaps[0]))
+		for id := range idMaps[0] {
+			ids = append(ids, id)
+		}
+		sort.Strings(ids)
 	}
 
 	key := nodeKey("")
@@ -255,11 +268,12 @@ func (s *Shim) ListAttestedNodes(ctx context.Context,
 	if p != nil {
 		limit = int64(p.PageSize)
 		if len(p.Token) > 0 {
-			if len(p.Token) < 12 || p.Token[0:2] != nodePrefix {
+			if len(p.Token) < 6 || p.Token[0:2] != nodePrefix {
 				return nil, status.Errorf(codes.InvalidArgument, "could not parse token '%s'", p.Token)
 			}
 			// TODO one bit larger than token
-			key = fmt.Sprintf("%s ", p.Token)
+			key = fmt.Sprintf("%s!", p.Token)
+			s.log.Info(fmt.Sprintf("received token, key = %v", key))
 		}
 	}
 
@@ -271,11 +285,13 @@ func (s *Shim) ListAttestedNodes(ctx context.Context,
 		// An interim approach would be to send batches of reads as a single transaction. Batches
 		// would be PageSize if paginated or a few hundred to a thousand at a time.
 		var i int64 = 1
-		for id := range idMaps[0] {
-			if p != nil && len(p.Token) > 0 && id < p.Token {
+		for _, id := range ids {
+			if p != nil && len(p.Token) > 0 && nodeKey(id) < key {
+				s.log.Info(fmt.Sprintf("skipping %s", id))
 				continue
 			}
 
+			s.log.Info(fmt.Sprintf("getting %s", id))
 			res, err := s.Store.Get(ctx, &store.GetRequest{Key: nodeKey(id)})
 			if err != nil {
 				return nil, err
@@ -287,12 +303,18 @@ func (s *Shim) ListAttestedNodes(ctx context.Context,
 				if err != nil {
 					return nil, err
 				}
+				if req.BySelectorMatch == nil && req.FetchSelectors == false {
+					node.Selectors = nil
+				}
 				resp.Nodes = append(resp.Nodes, node)
+				lastKey = nodeKey(node.SpiffeId)
+
+				// s.log.Info(fmt.Sprintf("i = %d  limit = %d", i, limit))
 				if limit > 0 && i == limit {
-					lastKey = node.SpiffeId
 					break
 				}
 			}
+			i++
 		}
 	} else {
 		// No query constraints, get all nodes up to limit
@@ -308,6 +330,9 @@ func (s *Shim) ListAttestedNodes(ctx context.Context,
 			if err != nil {
 				return nil, err
 			}
+			if req.FetchSelectors == false {
+				node.Selectors = nil
+			}
 			resp.Nodes = append(resp.Nodes, node)
 			lastKey = kv.Key
 		}
@@ -316,7 +341,9 @@ func (s *Shim) ListAttestedNodes(ctx context.Context,
 	if p != nil {
 		p.Token = ""
 		// Set token only if there may be more bundles than returned
-		if len(resp.Nodes) == int(p.PageSize) {
+		// if len(resp.Nodes) == int(p.PageSize) {
+		// However, the SQL implementation appears to set the token on the last page regardless
+		if len(resp.Nodes) > 0 {
 			p.Token = lastKey
 		}
 		resp.Pagination = p
@@ -326,7 +353,9 @@ func (s *Shim) ListAttestedNodes(ctx context.Context,
 }
 
 // UpdateAttestedNode updates the given node's cert serial and expiration.
-func (s *Shim) UpdateAttestedNode(ctx context.Context, req *datastore.UpdateAttestedNodeRequest) (resp *datastore.UpdateAttestedNodeResponse, err error) {
+func (s *Shim) UpdateAttestedNode(ctx context.Context,
+	req *datastore.UpdateAttestedNodeRequest) (resp *datastore.UpdateAttestedNodeResponse, err error) {
+
 	if s.Store == nil {
 		return s.DataStore.UpdateAttestedNode(ctx, req)
 	}
@@ -335,7 +364,9 @@ func (s *Shim) UpdateAttestedNode(ctx context.Context, req *datastore.UpdateAtte
 }
 
 // GetNodeSelectors gets node (agent) selectors by SPIFFE ID
-func (s *Shim) GetNodeSelectors(ctx context.Context, req *datastore.GetNodeSelectorsRequest) (resp *datastore.GetNodeSelectorsResponse, err error) {
+func (s *Shim) GetNodeSelectors(ctx context.Context,
+	req *datastore.GetNodeSelectorsRequest) (resp *datastore.GetNodeSelectorsResponse, err error) {
+
 	if s.Store == nil {
 		return s.DataStore.GetNodeSelectors(ctx, req)
 	}
@@ -344,7 +375,9 @@ func (s *Shim) GetNodeSelectors(ctx context.Context, req *datastore.GetNodeSelec
 }
 
 // ListNodeSelectors gets node (agent) selectors by SPIFFE ID
-func (s *Shim) ListNodeSelectors(ctx context.Context, req *datastore.ListNodeSelectorsRequest) (resp *datastore.ListNodeSelectorsResponse, err error) {
+func (s *Shim) ListNodeSelectors(ctx context.Context,
+	req *datastore.ListNodeSelectorsRequest) (resp *datastore.ListNodeSelectorsResponse, err error) {
+
 	if s.Store == nil {
 		return s.DataStore.ListNodeSelectors(ctx, req)
 	}
@@ -353,7 +386,9 @@ func (s *Shim) ListNodeSelectors(ctx context.Context, req *datastore.ListNodeSel
 }
 
 // SetNodeSelectors sets node (agent) selectors by SPIFFE ID, deleting old selectors first
-func (s *Shim) SetNodeSelectors(ctx context.Context, req *datastore.SetNodeSelectorsRequest) (resp *datastore.SetNodeSelectorsResponse, err error) {
+func (s *Shim) SetNodeSelectors(ctx context.Context,
+	req *datastore.SetNodeSelectorsRequest) (*datastore.SetNodeSelectorsResponse, error) {
+
 	if s.Store == nil {
 		return s.DataStore.SetNodeSelectors(ctx, req)
 	}
@@ -370,15 +405,41 @@ func (s *Shim) SetNodeSelectors(ctx context.Context, req *datastore.SetNodeSelec
 	}
 	node := fn.Node
 
-	// Build a list of selector index records to delete
-	// build list of delete operations to be performed as a transaction, starting with the attested node
-	// at the exact version just read, and including the index keys at any version
-	kvs := []*store.KeyValue{{Key: node.SpiffeId, Version: ver}}
+	// Build a list of selector index keys to delete
+	kvs := []*store.KeyValue{}
 	for _, sel := range fn.Node.Selectors {
 		kvs = append(kvs, &store.KeyValue{Key: nodeSelKey(node.SpiffeId, sel)})
 	}
 
-	return
+	// Create delete operation as first part of transaction
+	elements := []*store.SetRequestElement{{Kvs: kvs, Operation: store.Operation_DELETE}}
+
+	// Build update record for node with new selectors
+	node.Selectors = req.Selectors.Selectors
+	k := nodeKey(sid)
+	v, err := proto.Marshal(node)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build kvs list for put operation, starting with node and ensuring version is the same as read above
+	kvs = []*store.KeyValue{{Key: k, Value: v, Version: ver, Compare: store.Compare_EQUALS}}
+
+	// Add index records for new selectors
+	for _, sel := range node.Selectors {
+		kvs = append(kvs, &store.KeyValue{Key: nodeSelKey(node.SpiffeId, sel)})
+	}
+
+	// Add put operation for node update and new selectors to transaction
+	elements = append(elements, &store.SetRequestElement{Kvs: kvs, Operation: store.Operation_PUT})
+
+	// Submit transaction
+	_, err = s.Store.Set(ctx, &store.SetRequest{Elements: elements})
+	if err != nil {
+		return nil, err
+	}
+
+	return &datastore.SetNodeSelectorsResponse{}, nil
 }
 
 // nodeKey returns a string formatted key for an attested node

@@ -241,7 +241,7 @@ func (s *PluginSuite) TestFetchAttestedNodesWithPagination() {
 			},
 			expectedList: []*common.AttestedNode{aNode1, aNode2},
 			expectedPagination: &datastore.Pagination{
-				Token:    "2",
+				Token:    "N|node2",
 				PageSize: 2,
 			},
 		},
@@ -257,7 +257,7 @@ func (s *PluginSuite) TestFetchAttestedNodesWithPagination() {
 				aNode1WithSelectors, aNode2WithSelectors, aNode3WithSelectors,
 			},
 			expectedPagination: &datastore.Pagination{
-				Token:    "3",
+				Token:    "N|node3",
 				PageSize: 3,
 			},
 		},
@@ -304,7 +304,7 @@ func (s *PluginSuite) TestFetchAttestedNodesWithPagination() {
 			},
 			expectedList: []*common.AttestedNode{aNode1, aNode2, aNode3},
 			expectedPagination: &datastore.Pagination{
-				Token:    "3",
+				Token:    "N|node3",
 				PageSize: 3,
 			},
 		},
@@ -312,13 +312,13 @@ func (s *PluginSuite) TestFetchAttestedNodesWithPagination() {
 			name: "get all nodes second page",
 			req: &datastore.ListAttestedNodesRequest{
 				Pagination: &datastore.Pagination{
-					Token:    "3",
+					Token:    "N|node3",
 					PageSize: 3,
 				},
 			},
 			expectedList: []*common.AttestedNode{aNode4, aNode5},
 			expectedPagination: &datastore.Pagination{
-				Token:    "5",
+				Token:    "N|node5",
 				PageSize: 3,
 			},
 		},
@@ -327,7 +327,7 @@ func (s *PluginSuite) TestFetchAttestedNodesWithPagination() {
 			expectedList: []*common.AttestedNode{},
 			req: &datastore.ListAttestedNodesRequest{
 				Pagination: &datastore.Pagination{
-					Token:    "5",
+					Token:    "N|node5",
 					PageSize: 3,
 				},
 			},
@@ -345,7 +345,7 @@ func (s *PluginSuite) TestFetchAttestedNodesWithPagination() {
 			expectedList: []*common.AttestedNode{aNode1, aNode3, aNode4, aNode5},
 		},
 		{
-			name: "get nodes by expire before get only page first page",
+			name: "get nodes by expire before get only first page",
 			req: &datastore.ListAttestedNodesRequest{
 				Pagination: &datastore.Pagination{
 					Token:    "",
@@ -357,15 +357,15 @@ func (s *PluginSuite) TestFetchAttestedNodesWithPagination() {
 			},
 			expectedList: []*common.AttestedNode{aNode1, aNode3},
 			expectedPagination: &datastore.Pagination{
-				Token:    "3",
+				Token:    "N|node3",
 				PageSize: 2,
 			},
 		},
 		{
-			name: "get nodes by expire before get only page second page",
+			name: "get nodes by expire before get only second page",
 			req: &datastore.ListAttestedNodesRequest{
 				Pagination: &datastore.Pagination{
-					Token:    "3",
+					Token:    "N|node3",
 					PageSize: 2,
 				},
 				ByExpiresBefore: &wrapperspb.Int64Value{
@@ -374,15 +374,15 @@ func (s *PluginSuite) TestFetchAttestedNodesWithPagination() {
 			},
 			expectedList: []*common.AttestedNode{aNode4, aNode5},
 			expectedPagination: &datastore.Pagination{
-				Token:    "5",
+				Token:    "N|node5",
 				PageSize: 2,
 			},
 		},
 		{
-			name: "get nodes by expire before get only page third page no results",
+			name: "get nodes by expire before get only third page no results",
 			req: &datastore.ListAttestedNodesRequest{
 				Pagination: &datastore.Pagination{
-					Token:    "5",
+					Token:    "N|node5",
 					PageSize: 2,
 				},
 				ByExpiresBefore: &wrapperspb.Int64Value{
@@ -406,7 +406,7 @@ func (s *PluginSuite) TestFetchAttestedNodesWithPagination() {
 			expectedList: []*common.AttestedNode{aNode1, aNode4},
 			expectedPagination: &datastore.Pagination{
 				PageSize: 3,
-				Token:    "4",
+				Token:    "N|node4",
 			},
 		},
 		{
@@ -442,7 +442,7 @@ func (s *PluginSuite) TestFetchAttestedNodesWithPagination() {
 			expectedList: []*common.AttestedNode{aNode1, aNode2, aNode3},
 			expectedPagination: &datastore.Pagination{
 				PageSize: 4,
-				Token:    "3",
+				Token:    "N|node3",
 			},
 		},
 		{
@@ -464,7 +464,7 @@ func (s *PluginSuite) TestFetchAttestedNodesWithPagination() {
 			expectedList: []*common.AttestedNode{aNode4, aNode5},
 			expectedPagination: &datastore.Pagination{
 				PageSize: 2,
-				Token:    "5",
+				Token:    "N|node5",
 			},
 		},
 		{
@@ -485,14 +485,14 @@ func (s *PluginSuite) TestFetchAttestedNodesWithPagination() {
 			expectedList: []*common.AttestedNode{aNode1WithSelectors, aNode4WithSelectors},
 			expectedPagination: &datastore.Pagination{
 				PageSize: 2,
-				Token:    "4",
+				Token:    "N|node4",
 			},
 		},
 		{
 			name: "by selector match exact second page no results",
 			req: &datastore.ListAttestedNodesRequest{
 				Pagination: &datastore.Pagination{
-					Token:    "4",
+					Token:    "N|node4",
 					PageSize: 2,
 				},
 				BySelectorMatch: &datastore.BySelectors{
@@ -540,7 +540,7 @@ func (s *PluginSuite) TestFetchAttestedNodesWithPagination() {
 			expectedList: []*common.AttestedNode{aNode1WithSelectors, aNode2WithSelectors, aNode4WithSelectors},
 			expectedPagination: &datastore.Pagination{
 				PageSize: 4,
-				Token:    "4",
+				Token:    "N|node4",
 			},
 		},
 		{
@@ -576,7 +576,7 @@ func (s *PluginSuite) TestFetchAttestedNodesWithPagination() {
 			expectedList: []*common.AttestedNode{aNode1WithSelectors},
 			expectedPagination: &datastore.Pagination{
 				PageSize: 2,
-				Token:    "1",
+				Token:    "N|node1",
 			},
 		},
 		{
@@ -598,6 +598,7 @@ func (s *PluginSuite) TestFetchAttestedNodesWithPagination() {
 	for _, test := range tests {
 		test := test
 		s.T().Run(test.name, func(t *testing.T) {
+			s.T().Logf("test: %v", test.name)
 			resp, err := s.shim.ListAttestedNodes(ctx, test.req)
 			if test.expectedErr != "" {
 				require.EqualError(t, err, test.expectedErr)
@@ -610,6 +611,8 @@ func (s *PluginSuite) TestFetchAttestedNodesWithPagination() {
 				Nodes:      test.expectedList,
 				Pagination: test.expectedPagination,
 			}
+			s.T().Logf("expected: %v", expectedResponse)
+			s.T().Logf("received: %v", resp)
 			spiretest.RequireProtoEqual(t, expectedResponse, resp)
 		})
 	}
