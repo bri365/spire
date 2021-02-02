@@ -49,8 +49,8 @@ func (s *Shim) CreateAttestedNode(ctx context.Context,
 		return nil, err
 	}
 
-	// Create a list of items to add, starting with the attested node
-	kvs := []*store.KeyValue{{Key: k, Value: v}}
+	// Create a list of items to add, starting with the attested node, ensuring it doesn't already exist
+	kvs := []*store.KeyValue{{Key: k, Value: v, Compare: store.Compare_NOT_PRESENT}}
 
 	// Create index records for expiry, banned, and attestation type
 	kvs = append(kvs, &store.KeyValue{Key: nodeExpKey(node.SpiffeId, node.CertNotAfter)})
@@ -62,9 +62,12 @@ func (s *Shim) CreateAttestedNode(ctx context.Context,
 		kvs = append(kvs, &store.KeyValue{Key: nodeSelKey(node.SpiffeId, sel)})
 	}
 
-	s.log.Info(fmt.Sprintf("CAN kvs %v", kvs))
+	// One put operation for this transaction
+	elements := []*store.SetRequestElement{{Operation: store.Operation_PUT, Kvs: kvs}}
 
-	_, err = s.Store.Create(ctx, &store.PutRequest{Kvs: kvs})
+	s.log.Info(fmt.Sprintf("CAN elements %v", elements))
+
+	_, err = s.Store.Set(ctx, &store.SetRequest{Elements: elements})
 	if err != nil {
 		return nil, err
 	}
@@ -72,7 +75,9 @@ func (s *Shim) CreateAttestedNode(ctx context.Context,
 }
 
 // DeleteAttestedNode deletes the given attested node
-func (s *Shim) DeleteAttestedNode(ctx context.Context, req *datastore.DeleteAttestedNodeRequest) (*datastore.DeleteAttestedNodeResponse, error) {
+func (s *Shim) DeleteAttestedNode(ctx context.Context,
+	req *datastore.DeleteAttestedNodeRequest) (*datastore.DeleteAttestedNodeResponse, error) {
+
 	if s.Store == nil {
 		return s.DataStore.DeleteAttestedNode(ctx, req)
 	}
@@ -86,7 +91,7 @@ func (s *Shim) DeleteAttestedNode(ctx context.Context, req *datastore.DeleteAtte
 	// build list of delete operations to be performed as a transaction, starting with the attested node
 	// at the exact version just read, and including the index keys at any version
 	node := fn.Node
-	kvs := []*store.KeyValue{{Key: node.SpiffeId, Version: ver}}
+	kvs := []*store.KeyValue{{Key: node.SpiffeId, Version: ver, Compare: store.Compare_PRESENT}}
 
 	// Create index records for expiry, banned, and attestation type
 	kvs = append(kvs, &store.KeyValue{Key: nodeExpKey(node.SpiffeId, node.CertNotAfter)})
@@ -98,7 +103,10 @@ func (s *Shim) DeleteAttestedNode(ctx context.Context, req *datastore.DeleteAtte
 		kvs = append(kvs, &store.KeyValue{Key: nodeSelKey(node.SpiffeId, sel)})
 	}
 
-	_, err = s.Store.Delete(ctx, &store.DeleteRequest{Kvs: kvs})
+	// One put operation for this transaction
+	elements := []*store.SetRequestElement{{Operation: store.Operation_DELETE, Kvs: kvs}}
+
+	_, err = s.Store.Set(ctx, &store.SetRequest{Elements: elements})
 	if err != nil {
 		return nil, err
 	}

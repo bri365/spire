@@ -20,6 +20,7 @@ import (
 // AppendBundle creates or updates the given bundle
 func (s *Shim) AppendBundle(ctx context.Context,
 	req *datastore.AppendBundleRequest) (*datastore.AppendBundleResponse, error) {
+
 	if s.Store == nil {
 		return s.DataStore.AppendBundle(ctx, req)
 	}
@@ -53,6 +54,7 @@ func (s *Shim) AppendBundle(ctx context.Context,
 // CountBundles retrieves the total number of bundles in the store.
 func (s *Shim) CountBundles(ctx context.Context,
 	req *datastore.CountBundlesRequest) (*datastore.CountBundlesResponse, error) {
+
 	if s.Store == nil {
 		return s.DataStore.CountBundles(ctx, req)
 	}
@@ -70,6 +72,7 @@ func (s *Shim) CountBundles(ctx context.Context,
 // CreateBundle stores the given bundle
 func (s *Shim) CreateBundle(ctx context.Context,
 	req *datastore.CreateBundleRequest) (*datastore.CreateBundleResponse, error) {
+
 	if s.Store == nil {
 		return s.DataStore.CreateBundle(ctx, req)
 	}
@@ -81,21 +84,30 @@ func (s *Shim) CreateBundle(ctx context.Context,
 		return nil, err
 	}
 
-	_, err = s.Store.Create(ctx, &store.PutRequest{
-		Kvs: []*store.KeyValue{{Key: k, Value: v}},
-	})
+	// Add key, value, and not present to ensure bundle doesn't already exist
+	kvs := []*store.KeyValue{{Key: k, Value: v, Compare: store.Compare_NOT_PRESENT}}
+
+	// One put operation for this transaction
+	elements := []*store.SetRequestElement{{Operation: store.Operation_PUT, Kvs: kvs}}
+
+	_, err = s.Store.Set(ctx, &store.SetRequest{Elements: elements})
 	if err != nil {
-		return nil, err
+		st := status.Convert(err)
+		if st.Code() == codes.Aborted {
+			return nil, status.Error(codes.AlreadyExists, "store-etcd: record already exists")
+		} else {
+			return nil, err
+		}
 	}
 
 	return &datastore.CreateBundleResponse{Bundle: req.Bundle}, nil
-
 }
 
 // DeleteBundle removes the given bundle from the store
 // NOTE a returned bundle is currently not consumed by any caller, so it is not provided.
 func (s *Shim) DeleteBundle(ctx context.Context,
 	req *datastore.DeleteBundleRequest) (*datastore.DeleteBundleResponse, error) {
+
 	if s.Store == nil {
 		return s.DataStore.DeleteBundle(ctx, req)
 	}
@@ -105,10 +117,16 @@ func (s *Shim) DeleteBundle(ctx context.Context,
 		return nil, err
 	}
 
-	_, err = s.Store.Delete(ctx, &store.DeleteRequest{
-		Kvs: []*store.KeyValue{{Key: bundleKey(trustDomainID)}},
-	})
+	// Add key, value, and compare present to ensure bundle exists
+	kvs := []*store.KeyValue{{Key: bundleKey(trustDomainID), Compare: store.Compare_PRESENT}}
+
+	// One put operation for this transaction
+	elements := []*store.SetRequestElement{{Operation: store.Operation_DELETE, Kvs: kvs}}
+
+	_, err = s.Store.Set(ctx, &store.SetRequest{Elements: elements})
 	if err != nil {
+		// TODO get most accurate error possible
+		// st := status.Convert(err)
 		return nil, err
 	}
 
@@ -118,6 +136,7 @@ func (s *Shim) DeleteBundle(ctx context.Context,
 // FetchBundle retrieves the given bundle by SpiffieID
 func (s *Shim) FetchBundle(ctx context.Context,
 	req *datastore.FetchBundleRequest) (resp *datastore.FetchBundleResponse, err error) {
+
 	if s.Store == nil {
 		return s.DataStore.FetchBundle(ctx, req)
 	}
@@ -135,6 +154,7 @@ func (s *Shim) FetchBundle(ctx context.Context,
 // fetchBundle retrieves the given bundle by SpiffieID
 func (s *Shim) fetchBundle(ctx context.Context,
 	req *datastore.FetchBundleRequest) (*datastore.FetchBundleResponse, int64, error) {
+
 	res, err := s.Store.Get(ctx, &store.GetRequest{Key: bundleKey(req.TrustDomainId)})
 	if err != nil {
 		return nil, 0, err
@@ -159,6 +179,7 @@ func (s *Shim) fetchBundle(ctx context.Context,
 // ListBundles retrieves an optionally paginated list of all bundles.
 func (s *Shim) ListBundles(ctx context.Context,
 	req *datastore.ListBundlesRequest) (*datastore.ListBundlesResponse, error) {
+
 	if s.Store == nil {
 		return s.DataStore.ListBundles(ctx, req)
 	}
@@ -215,6 +236,7 @@ func (s *Shim) ListBundles(ctx context.Context,
 // PruneBundle removes expired certs and keys from a bundle
 func (s *Shim) PruneBundle(ctx context.Context,
 	req *datastore.PruneBundleRequest) (*datastore.PruneBundleResponse, error) {
+
 	if s.Store == nil {
 		return s.DataStore.PruneBundle(ctx, req)
 	}
@@ -250,6 +272,7 @@ func (s *Shim) PruneBundle(ctx context.Context,
 // SetBundle creates or updates the given bundle
 func (s *Shim) SetBundle(ctx context.Context,
 	req *datastore.SetBundleRequest) (*datastore.SetBundleResponse, error) {
+
 	if s.Store == nil {
 		return s.DataStore.SetBundle(ctx, req)
 	}
@@ -279,6 +302,7 @@ func (s *Shim) SetBundle(ctx context.Context,
 // UpdateBundle replaces the existing bundle with new bundle elements
 func (s *Shim) UpdateBundle(ctx context.Context,
 	req *datastore.UpdateBundleRequest) (*datastore.UpdateBundleResponse, error) {
+
 	if s.Store == nil {
 		return s.DataStore.UpdateBundle(ctx, req)
 	}
@@ -290,13 +314,20 @@ func (s *Shim) UpdateBundle(ctx context.Context,
 // Implement opportunistic locking if given an object version from a previous read operation.
 func (s *Shim) updateBundle(ctx context.Context,
 	req *datastore.UpdateBundleRequest, ver int64) (*datastore.UpdateBundleResponse, error) {
+
+	// Get current bundle to update
 	id := req.Bundle.TrustDomainId
-	fr, err := s.FetchBundle(ctx, &datastore.FetchBundleRequest{TrustDomainId: id})
+	fr, current, err := s.fetchBundle(ctx, &datastore.FetchBundleRequest{TrustDomainId: id})
 	if err != nil {
 		return nil, err
 	}
+
 	if fr.Bundle == nil {
 		return nil, status.Error(codes.NotFound, "store-etcd: record not found")
+	}
+
+	if ver > 0 && ver != current {
+		return nil, status.Error(codes.Aborted, "store-etcd: version not found")
 	}
 
 	m := req.InputMask
@@ -322,9 +353,14 @@ func (s *Shim) updateBundle(ctx context.Context,
 	if err != nil {
 		return nil, err
 	}
-	_, err = s.Store.Update(ctx, &store.PutRequest{
-		Kvs: []*store.KeyValue{{Key: k, Value: v, Version: ver}},
-	})
+
+	// Ensure bundle version equals previous get version to commit transaction
+	kvs := []*store.KeyValue{{Key: k, Value: v, Version: current, Compare: store.Compare_EQUALS}}
+
+	// One put operation for this transaction
+	elements := []*store.SetRequestElement{{Operation: store.Operation_PUT, Kvs: kvs}}
+
+	_, err = s.Store.Set(ctx, &store.SetRequest{Elements: elements})
 	if err != nil {
 		return nil, err
 	}

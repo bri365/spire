@@ -14,6 +14,7 @@ import (
 	"github.com/spiffe/spire/pkg/common/catalog"
 	"github.com/spiffe/spire/pkg/server/plugin/store"
 	spi "github.com/spiffe/spire/proto/spire/common/plugin"
+	pb "github.com/spiffe/spire/proto/spire/server/store"
 	"github.com/zeebo/errs"
 
 	"github.com/roguesoftware/etcd/clientv3"
@@ -131,95 +132,7 @@ func (st *Plugin) Configure(ctx context.Context, req *spi.ConfigureRequest) (*sp
 	return &spi.ConfigureResponse{}, nil
 }
 
-// Create adds one or more new items in a single transaction.
-func (st *Plugin) Create(ctx context.Context, req *store.PutRequest) (*store.PutResponse, error) {
-	// Comparisons to verify keys do not already exist (version is 0)
-	cmps := []clientv3.Cmp{}
-
-	// Operations to execute if all comparisons are true
-	ops := []clientv3.Op{}
-
-	for _, kv := range req.Kvs {
-		cmps = append(cmps, clientv3.Compare(clientv3.Version(kv.Key), "=", 0))
-		ops = append(ops, clientv3.OpPut(kv.Key, string(kv.Value)))
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
-	t, err := st.c.Txn(ctx).
-		If(cmps...).
-		Then(ops...).
-		Commit()
-	cancel()
-	if err != nil {
-		return nil, err
-	}
-	if !t.Succeeded {
-		return nil, status.Error(codes.AlreadyExists, "store-etcd: record already exists")
-	}
-
-	return &store.PutResponse{Revision: t.Header.Revision}, nil
-}
-
-// Delete removes one or more item(s) as a single transaction.
-// A range and/or an array of keys (KV entries) is required.
-// Any key/value may contain a Version, which will be used to validate that key before deletion.
-// If any version check fails, the entire transaction will be aborted.
-func (st *Plugin) Delete(ctx context.Context, req *store.DeleteRequest) (*store.DeleteResponse, error) {
-	if req.Range == nil && len(req.Kvs) == 0 {
-		return nil, status.Error(codes.InvalidArgument, "store-etcd: kv and/or range required")
-	}
-
-	// Comparisons to verify keys exist (version > 0) or are requested version
-	cmps := []clientv3.Cmp{}
-
-	// Operations to execute
-	ops := []clientv3.Op{}
-
-	// Add range delete to transaction
-	if req.Range != nil {
-		if req.Range.Key == "" || req.Range.End == "" {
-			return nil, status.Error(codes.InvalidArgument, "store-etcd: range key and end required")
-		}
-
-		opts := []clientv3.OpOption{clientv3.WithRange(req.Range.End)}
-		ops = append(ops, clientv3.OpDelete(req.Range.Key, opts...))
-	}
-
-	// Add each KV delete, with optional checks, to transaction
-	for _, kv := range req.Kvs {
-		// Version of -1 for no compare, 0 to ensure key exists, > 0 to confirm current version
-		if kv.Version == 0 {
-			cmps = append(cmps, clientv3.Compare(clientv3.Version(kv.Key), ">", 0))
-		} else if kv.Version > 0 {
-			cmps = append(cmps, clientv3.Compare(clientv3.Version(kv.Key), "=", kv.Version))
-		}
-
-		ops = append(ops, clientv3.OpDelete(kv.Key))
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
-	t, err := st.c.Txn(ctx).
-		If(cmps...).
-		Then(ops...).
-		Commit()
-	cancel()
-	if err != nil {
-		return nil, err
-	}
-	if !t.Succeeded {
-		return nil, status.Error(codes.Aborted, "store-etcd: missing or incorrect version")
-	}
-
-	return &store.DeleteResponse{Revision: t.Header.Revision}, nil
-}
-
-func (st *Plugin) close() {
-	if st.c != nil {
-		st.c.Close()
-	}
-}
-
-// Get retrieves one or more item(s) by key range.
+// Get retrieves one or more items by key range.
 func (st *Plugin) Get(ctx context.Context, req *store.GetRequest) (*store.GetResponse, error) {
 	opts := []clientv3.OpOption{}
 	if req.End != "" {
@@ -245,54 +158,74 @@ func (st *Plugin) Get(ctx context.Context, req *store.GetRequest) (*store.GetRes
 			Version:        kv.Version,
 		})
 	}
-	gr := &store.GetResponse{
+
+	resp := &store.GetResponse{
 		Revision: res.Header.Revision,
 		Kvs:      kvs,
 		More:     res.More,
 		Total:    res.Count,
 	}
 
-	return gr, nil
+	return resp, nil
 }
 
-// Transaction performs the given operations as a single transaction.
-func (st *Plugin) Transaction(ctx context.Context, req *store.TransactionRequest) (*store.TransactionResponse, error) {
-	// TODO implement
-	return &store.TransactionResponse{}, nil
-}
+// Set adds, deletes, or updates one or more items in a single transaction.
+// If a single comparison is requested, it should be listed first for the most precise error code.
+func (st *Plugin) Set(ctx context.Context, req *store.SetRequest) (*store.SetResponse, error) {
+	if len(req.Elements) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "store-etcd: one or more set elements required")
+	}
 
-// Update modifies one or more existing item(s) in a single transaction.
-func (st *Plugin) Update(ctx context.Context, req *store.PutRequest) (*store.PutResponse, error) {
-	// Comparisons to verify keys already exist (version > 0)
+	// Comparisons to perform before committing kv writes
 	cmps := []clientv3.Cmp{}
+
 	// Operations to execute if all comparisons are true
 	ops := []clientv3.Op{}
 
-	for _, kv := range req.Kvs {
-		// ensure items exists or is correct version (for read-modify-write operations)
-		if kv.Version == 0 {
-			cmps = append(cmps, clientv3.Compare(clientv3.Version(kv.Key), ">", 0))
-		} else {
-			cmps = append(cmps, clientv3.Compare(clientv3.Version(kv.Key), "=", kv.Version))
+	for _, element := range req.Elements {
+		for _, kv := range element.Kvs {
+			// Add requested comparison, if requested; default is no comparison
+			if kv.Compare == pb.Compare_NOT_PRESENT {
+				// Create new key
+				cmps = append(cmps, clientv3.Compare(clientv3.Version(kv.Key), "=", 0))
+			} else if kv.Compare == pb.Compare_PRESENT {
+				// Update existing key
+				cmps = append(cmps, clientv3.Compare(clientv3.Version(kv.Key), ">", 0))
+			} else if kv.Compare == pb.Compare_EQUALS {
+				// Update with transactional integrity from a previous read operation
+				cmps = append(cmps, clientv3.Compare(clientv3.Version(kv.Key), "=", kv.Version))
+			}
+
+			// Add the operation
+			if element.Operation == store.Operation_DELETE {
+				opts := []clientv3.OpOption{}
+				if kv.End != "" {
+					opts = append(opts, clientv3.WithRange(kv.End))
+				}
+				ops = append(ops, clientv3.OpDelete(kv.Key, opts...))
+			} else if element.Operation == store.Operation_PUT {
+				ops = append(ops, clientv3.OpPut(kv.Key, string(kv.Value)))
+			}
 		}
-		ops = append(ops, clientv3.OpPut(kv.Key, string(kv.Value)))
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
+	// Send the transaction to the etcd cluster
 	t, err := st.c.Txn(ctx).
 		If(cmps...).
 		Then(ops...).
 		Commit()
-	cancel()
 	if err != nil {
 		return nil, err
 	}
 	if !t.Succeeded {
-		// TODO distinguish between not found and tranaction collision (wrong version)
-		return nil, status.Error(codes.NotFound, "store-etcd: record not found")
+		return nil, status.Error(codes.Aborted, "store-etcd: missing or incorrect version")
 	}
 
-	return &store.PutResponse{Revision: t.Header.Revision}, nil
+	resp := &store.SetResponse{Revision: t.Header.Revision}
+
+	// TODO consider returning responses for the operations
+
+	return resp, nil
 }
 
 func (st *Plugin) openConnection(cfg *configuration, isReadOnly bool) error {
@@ -327,4 +260,10 @@ func (st *Plugin) openConnection(cfg *configuration, isReadOnly bool) error {
 	// }
 
 	return nil
+}
+
+func (st *Plugin) close() {
+	if st.c != nil {
+		st.c.Close()
+	}
 }

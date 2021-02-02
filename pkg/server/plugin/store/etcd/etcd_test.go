@@ -104,8 +104,9 @@ func (s *PluginSuite) SetupTest() {
 
 	if len(res.Kvs) > 0 {
 		s.T().Logf("Deleting %d key(s) from store", len(res.Kvs))
-		_, err = s.st.Delete(context.Background(), &store.DeleteRequest{
-			Range: &store.Range{Key: "A", End: "z"},
+		kvs := []*store.KeyValue{{Key: "A", End: "z"}}
+		_, err = s.st.Set(context.Background(), &store.SetRequest{
+			Elements: []*store.SetRequestElement{{Operation: store.Operation_DELETE, Kvs: kvs}},
 		})
 		if err != nil {
 			s.T().Log(err)

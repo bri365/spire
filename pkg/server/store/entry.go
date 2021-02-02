@@ -34,6 +34,7 @@ func (s *Shim) CountRegistrationEntries(ctx context.Context,
 // CreateRegistrationEntry stores the given registration entry
 func (s *Shim) CreateRegistrationEntry(ctx context.Context,
 	req *datastore.CreateRegistrationEntryRequest) (*datastore.CreateRegistrationEntryResponse, error) {
+
 	if s.Store == nil {
 		return s.DataStore.CreateRegistrationEntry(ctx, req)
 	}
@@ -60,13 +61,18 @@ func (s *Shim) CreateRegistrationEntry(ctx context.Context,
 		return nil, err
 	}
 
-	// Create a list of items to add, starting with the registered entry
-	kvs := []*store.KeyValue{{Key: k, Value: v}}
+	// Add key, value, and not present to ensure entry doesn't already exist
+	kvs := []*store.KeyValue{{Key: k, Value: v, Compare: store.Compare_NOT_PRESENT}}
 
-	// Create index records for TODO
+	// First operation for this transaction creates the registered entry
+	elements := []*store.SetRequestElement{{Operation: store.Operation_PUT, Kvs: kvs}}
 
-	_, err = s.Store.Create(ctx, &store.PutRequest{Kvs: kvs})
+	// TODO Create index records
+
+	_, err = s.Store.Set(ctx, &store.SetRequest{Elements: elements})
 	if err != nil {
+		// TODO get most accurate error possible
+		// st := status.Convert(err)
 		return nil, err
 	}
 	return &datastore.CreateRegistrationEntryResponse{Entry: req.Entry}, nil
@@ -79,8 +85,15 @@ func (s *Shim) DeleteRegistrationEntry(ctx context.Context,
 		return s.DataStore.DeleteRegistrationEntry(ctx, req)
 	}
 
+	// Add key, value, and compare present to ensure entry exists
+	kvs := []*store.KeyValue{{Key: entryKey(req.EntryId), Compare: store.Compare_PRESENT}}
+
+	// First operation for this transaction is the registered entry
+	elements := []*store.SetRequestElement{{Operation: store.Operation_DELETE, Kvs: kvs}}
+
 	// TODO delete index records
-	_, err := s.Store.Delete(ctx, &store.DeleteRequest{Kvs: []*store.KeyValue{{Key: entryKey(req.EntryId)}}})
+
+	_, err := s.Store.Set(ctx, &store.SetRequest{Elements: elements})
 	if err != nil {
 		return nil, err
 	}

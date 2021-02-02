@@ -4,7 +4,7 @@ option go_package = "github.com/spiffe/spire/proto/spire/server/store";
 
 import "spire/common/plugin/plugin.proto";
 
-// Compare defines how Version is used in transactions.
+// Compare defines how Version is used in transaction comparisons.
 enum Compare {
     // Default, no kv version check for the operation.
     NONE = 0;
@@ -19,38 +19,32 @@ enum Compare {
     EQUALS = 3;
 }
 
+// KeyValue represents the central request/response object for the store.
 message KeyValue {
     // The requested or returned key.
     string key = 1;
 
+    // Set to request a range rather than a single key.
+    string end = 2;
+
     // The requested or returned value for the given key.
-    bytes value = 2;
+    bytes value = 3;
+
+    // Expiration in seconds since unix epoch.
+    int64 expiry = 4;
 
     // The returned revision of the store when the key was created.
-    int64 create_revision = 3;
+    int64 create_revision = 5;
 
     // The returned revision of the store when the key was modified.
-    int64 mod_revision = 4;
+    int64 mod_revision = 6;
 
     // The returned version of the item for the requested operation.
     // Version may also be set for delete, put, or transaction operations.
-    int64 version = 5;
+    int64 version = 7;
 
     // Compare defines how Version is handled in transactions.
-    Compare compare = 6;
-}
-
-message Range {
-    // key is the first (or only) key requested.
-    // If end is not given, the request affects only the single key.
-    string key = 1;
-
-    // end is the key following the last key to affect for the range [key, end).
-    // If end is not given, the range is defined to contain only the key argument.
-    // If end is one bit larger than the given key, then the range is all the keys
-    // with the prefix (the given key).
-    // If end is '\0', the range is all keys greater than or equal to the key argument.
-    string end = 2;
+    Compare compare = 8;
 }
 
 message GetRequest {
@@ -81,7 +75,7 @@ message GetRequest {
 }
 
 message GetResponse {
-    // The store revision when the request was applied.
+    // The store revision when the get request was applied.
     int64 revision = 1;
 
     repeated KeyValue kvs = 2;
@@ -91,64 +85,40 @@ message GetResponse {
 
     // Total number of keys in the requested range.
     int64 total = 4;
-  }
-
-message PutRequest {
-    // KVs to be written as a single transaction.
-    repeated KeyValue kvs = 1;
-
-    // Expiration in seconds since unix epoch, applied to all items
-    int64 expiry = 2;
 }
 
-message PutResponse {
-    // The store revision after the request was applied.
-    int64 revision = 1;
-}
-
-message DeleteRequest {
-    // One or more KVs and/or one range to be deleted as a single transaction.
-	// KV version of -1 for no compare, 0 to ensure key exists, > 0 to confirm current version.
-    repeated KeyValue kvs = 1;
-    Range range = 2;
-}
-
-message DeleteResponse {
-    // The store revision after the request was applied.
-    int64 revision = 1;
-
-    // The number of keys deleted by the delete range request.
-    int64 deleted = 2;
-}
-
-// Operation defines the action to be taken for the given keys as part of the transaction.
+// Operation defines the action to be taken for a given set of keys as part of a set transaction.
 enum Operation {
+    // No operation.
+    NOOP = 0;
+
     // Add a comparison constraint to the transaction without any action.
-    COMPARE = 0;
+    COMPARE = 1;
 
     // Delete the assocaiated key(s), constrained by Version, if present in kvs.
-    DELETE = 1;
+    DELETE = 2;
 
     // Create or update the associated key(s), constrained by Version, if present in kvs.
-    PUT = 2;
+    PUT = 3;
 }
 
-// Transactions allow operations of different types (delete or put) to be performed together.
-message TransactionElement {
+// Set request element defines a single write (create, delete, update) operation.
+message SetRequestElement {
     // Operation to be performed.
     Operation operation = 1;
 
-    // One or more keys, with values or versions as needed.
+    // One or more keys, with values, versions, expiry, and/or compare types as needed.
     repeated KeyValue kvs = 2;
 }
 
-message TransactionRequest {
-    // One or more operation elements to be performed as a single transaction.
-    repeated TransactionElement elements = 1;
+// Set executes one or more write (create, delete, update) operations together as a single transaction.
+message SetRequest {
+    // One or more operations to be performed as a single transaction.
+    repeated SetRequestElement elements = 1;
 }
 
-message TransactionResponse {
-    // The store revision after the request was applied.
+message SetResponse {
+    // The store revision after the  was applied.
     int64 revision = 1;
 }
 
@@ -164,16 +134,9 @@ service Store {
     // Returns the version and related metadata of the installed plugin
     rpc GetPluginInfo(spire.common.plugin.GetPluginInfoRequest) returns (spire.common.plugin.GetPluginInfoResponse);
 
-    // Get one or more entries
+    // Get one or more items from the store.
     rpc Get(GetRequest) returns (GetResponse);
 
-    // Put one or more entries
-    rpc Create(PutRequest) returns (PutResponse);
-    rpc Update(PutRequest) returns (PutResponse);
-
-    // Delete one or more entries
-    rpc Delete(DeleteRequest) returns (DeleteResponse);
-
-    // Perform different operations in a single transaction
-    rpc Transaction(TransactionRequest) returns (TransactionResponse);
+    // Set one or more items (create, delete, update, and set/upsert) in the store as a single transaction.
+    rpc Set(SetRequest) returns (SetResponse);
 }

@@ -22,15 +22,10 @@ type StoreClient interface {
 	Configure(ctx context.Context, in *plugin.ConfigureRequest, opts ...grpc.CallOption) (*plugin.ConfigureResponse, error)
 	// Returns the version and related metadata of the installed plugin
 	GetPluginInfo(ctx context.Context, in *plugin.GetPluginInfoRequest, opts ...grpc.CallOption) (*plugin.GetPluginInfoResponse, error)
-	// Get one or more entries
+	// Get one or more items from the store.
 	Get(ctx context.Context, in *GetRequest, opts ...grpc.CallOption) (*GetResponse, error)
-	// Put one or more entries
-	Create(ctx context.Context, in *PutRequest, opts ...grpc.CallOption) (*PutResponse, error)
-	Update(ctx context.Context, in *PutRequest, opts ...grpc.CallOption) (*PutResponse, error)
-	// Delete one or more entries
-	Delete(ctx context.Context, in *DeleteRequest, opts ...grpc.CallOption) (*DeleteResponse, error)
-	// Perform different operations in a single transaction
-	Transaction(ctx context.Context, in *TransactionRequest, opts ...grpc.CallOption) (*TransactionResponse, error)
+	// Set one or more items (create, delete, update, and set/upsert) in the store as a single transaction.
+	Set(ctx context.Context, in *SetRequest, opts ...grpc.CallOption) (*SetResponse, error)
 }
 
 type storeClient struct {
@@ -68,36 +63,9 @@ func (c *storeClient) Get(ctx context.Context, in *GetRequest, opts ...grpc.Call
 	return out, nil
 }
 
-func (c *storeClient) Create(ctx context.Context, in *PutRequest, opts ...grpc.CallOption) (*PutResponse, error) {
-	out := new(PutResponse)
-	err := c.cc.Invoke(ctx, "/spire.server.store.Store/Create", in, out, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *storeClient) Update(ctx context.Context, in *PutRequest, opts ...grpc.CallOption) (*PutResponse, error) {
-	out := new(PutResponse)
-	err := c.cc.Invoke(ctx, "/spire.server.store.Store/Update", in, out, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *storeClient) Delete(ctx context.Context, in *DeleteRequest, opts ...grpc.CallOption) (*DeleteResponse, error) {
-	out := new(DeleteResponse)
-	err := c.cc.Invoke(ctx, "/spire.server.store.Store/Delete", in, out, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *storeClient) Transaction(ctx context.Context, in *TransactionRequest, opts ...grpc.CallOption) (*TransactionResponse, error) {
-	out := new(TransactionResponse)
-	err := c.cc.Invoke(ctx, "/spire.server.store.Store/Transaction", in, out, opts...)
+func (c *storeClient) Set(ctx context.Context, in *SetRequest, opts ...grpc.CallOption) (*SetResponse, error) {
+	out := new(SetResponse)
+	err := c.cc.Invoke(ctx, "/spire.server.store.Store/Set", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -112,15 +80,10 @@ type StoreServer interface {
 	Configure(context.Context, *plugin.ConfigureRequest) (*plugin.ConfigureResponse, error)
 	// Returns the version and related metadata of the installed plugin
 	GetPluginInfo(context.Context, *plugin.GetPluginInfoRequest) (*plugin.GetPluginInfoResponse, error)
-	// Get one or more entries
+	// Get one or more items from the store.
 	Get(context.Context, *GetRequest) (*GetResponse, error)
-	// Put one or more entries
-	Create(context.Context, *PutRequest) (*PutResponse, error)
-	Update(context.Context, *PutRequest) (*PutResponse, error)
-	// Delete one or more entries
-	Delete(context.Context, *DeleteRequest) (*DeleteResponse, error)
-	// Perform different operations in a single transaction
-	Transaction(context.Context, *TransactionRequest) (*TransactionResponse, error)
+	// Set one or more items (create, delete, update, and set/upsert) in the store as a single transaction.
+	Set(context.Context, *SetRequest) (*SetResponse, error)
 	mustEmbedUnimplementedStoreServer()
 }
 
@@ -137,17 +100,8 @@ func (UnimplementedStoreServer) GetPluginInfo(context.Context, *plugin.GetPlugin
 func (UnimplementedStoreServer) Get(context.Context, *GetRequest) (*GetResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Get not implemented")
 }
-func (UnimplementedStoreServer) Create(context.Context, *PutRequest) (*PutResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method Create not implemented")
-}
-func (UnimplementedStoreServer) Update(context.Context, *PutRequest) (*PutResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method Update not implemented")
-}
-func (UnimplementedStoreServer) Delete(context.Context, *DeleteRequest) (*DeleteResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method Delete not implemented")
-}
-func (UnimplementedStoreServer) Transaction(context.Context, *TransactionRequest) (*TransactionResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method Transaction not implemented")
+func (UnimplementedStoreServer) Set(context.Context, *SetRequest) (*SetResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Set not implemented")
 }
 func (UnimplementedStoreServer) mustEmbedUnimplementedStoreServer() {}
 
@@ -216,74 +170,20 @@ func _Store_Get_Handler(srv interface{}, ctx context.Context, dec func(interface
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Store_Create_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(PutRequest)
+func _Store_Set_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(StoreServer).Create(ctx, in)
+		return srv.(StoreServer).Set(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/spire.server.store.Store/Create",
+		FullMethod: "/spire.server.store.Store/Set",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(StoreServer).Create(ctx, req.(*PutRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _Store_Update_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(PutRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(StoreServer).Update(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: "/spire.server.store.Store/Update",
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(StoreServer).Update(ctx, req.(*PutRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _Store_Delete_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(DeleteRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(StoreServer).Delete(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: "/spire.server.store.Store/Delete",
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(StoreServer).Delete(ctx, req.(*DeleteRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _Store_Transaction_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(TransactionRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(StoreServer).Transaction(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: "/spire.server.store.Store/Transaction",
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(StoreServer).Transaction(ctx, req.(*TransactionRequest))
+		return srv.(StoreServer).Set(ctx, req.(*SetRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -305,20 +205,8 @@ var _Store_serviceDesc = grpc.ServiceDesc{
 			Handler:    _Store_Get_Handler,
 		},
 		{
-			MethodName: "Create",
-			Handler:    _Store_Create_Handler,
-		},
-		{
-			MethodName: "Update",
-			Handler:    _Store_Update_Handler,
-		},
-		{
-			MethodName: "Delete",
-			Handler:    _Store_Delete_Handler,
-		},
-		{
-			MethodName: "Transaction",
-			Handler:    _Store_Transaction_Handler,
+			MethodName: "Set",
+			Handler:    _Store_Set_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
