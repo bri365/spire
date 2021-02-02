@@ -25,6 +25,7 @@ func (st *Plugin) sanity() error {
 	ctx, cancel = context.WithTimeout(context.Background(), requestTimeout)
 	_, err = st.Create(ctx, &store.PutRequest{
 		Kvs: []*store.KeyValue{
+			{Key: "key2", Value: []byte("value2")},
 			{Key: "key10", Value: []byte("value10")},
 			{Key: "key11", Value: []byte("value11")},
 		}})
@@ -36,7 +37,7 @@ func (st *Plugin) sanity() error {
 	st.log.Info("Update")
 	ctx, cancel = context.WithTimeout(context.Background(), requestTimeout)
 	_, err = st.Update(ctx, &store.PutRequest{
-		Kvs: []*store.KeyValue{{Key: "key1", Value: []byte("value2")}},
+		Kvs: []*store.KeyValue{{Key: "key1", Value: []byte("value01")}},
 	})
 	cancel()
 	if err != nil {
@@ -56,9 +57,7 @@ func (st *Plugin) sanity() error {
 
 	st.log.Info("Get")
 	ctx, cancel = context.WithTimeout(context.Background(), requestTimeout)
-	res, err := st.Get(ctx, &store.GetRequest{
-		Key: "key1",
-	})
+	res, err := st.Get(ctx, &store.GetRequest{Key: "key1"})
 	cancel()
 	if err != nil {
 		return err
@@ -67,10 +66,7 @@ func (st *Plugin) sanity() error {
 	st.log.Info(msg)
 
 	ctx, cancel = context.WithTimeout(context.Background(), requestTimeout)
-	res, err = st.Get(ctx, &store.GetRequest{
-		Key: "key1",
-		End: "key2",
-	})
+	res, err = st.Get(ctx, &store.GetRequest{Key: "key1", End: "key2"})
 	cancel()
 	if err != nil {
 		return err
@@ -78,19 +74,10 @@ func (st *Plugin) sanity() error {
 	msg = fmt.Sprintf("%d %d %v", res.Total, res.Revision, res.Kvs)
 	st.log.Info(msg)
 
-	st.log.Info("Delete")
 	ctx, cancel = context.WithTimeout(context.Background(), requestTimeout)
 	_, err = st.Delete(ctx, &store.DeleteRequest{
-		Ranges: []*store.Range{{Key: "key1"}},
-	})
-	cancel()
-	if err != nil {
-		return err
-	}
-
-	ctx, cancel = context.WithTimeout(context.Background(), requestTimeout)
-	_, err = st.Delete(ctx, &store.DeleteRequest{
-		Ranges: []*store.Range{{Key: "key1"}, {Key: "key10", End: "key12"}},
+		Kvs:   []*store.KeyValue{{Key: "key1"}, {Key: "key2", Version: 0}},
+		Range: &store.Range{Key: "key10", End: "key12"},
 	})
 	cancel()
 	if err != nil {

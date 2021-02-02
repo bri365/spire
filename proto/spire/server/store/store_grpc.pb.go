@@ -18,6 +18,10 @@ const _ = grpc.SupportPackageIsVersion7
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type StoreClient interface {
+	// Applies the plugin configuration
+	Configure(ctx context.Context, in *plugin.ConfigureRequest, opts ...grpc.CallOption) (*plugin.ConfigureResponse, error)
+	// Returns the version and related metadata of the installed plugin
+	GetPluginInfo(ctx context.Context, in *plugin.GetPluginInfoRequest, opts ...grpc.CallOption) (*plugin.GetPluginInfoResponse, error)
 	// Get one or more entries
 	Get(ctx context.Context, in *GetRequest, opts ...grpc.CallOption) (*GetResponse, error)
 	// Put one or more entries
@@ -25,10 +29,8 @@ type StoreClient interface {
 	Update(ctx context.Context, in *PutRequest, opts ...grpc.CallOption) (*PutResponse, error)
 	// Delete one or more entries
 	Delete(ctx context.Context, in *DeleteRequest, opts ...grpc.CallOption) (*DeleteResponse, error)
-	// Applies the plugin configuration
-	Configure(ctx context.Context, in *plugin.ConfigureRequest, opts ...grpc.CallOption) (*plugin.ConfigureResponse, error)
-	// Returns the version and related metadata of the installed plugin
-	GetPluginInfo(ctx context.Context, in *plugin.GetPluginInfoRequest, opts ...grpc.CallOption) (*plugin.GetPluginInfoResponse, error)
+	// Perform different operations in a single transaction
+	Transaction(ctx context.Context, in *TransactionRequest, opts ...grpc.CallOption) (*TransactionResponse, error)
 }
 
 type storeClient struct {
@@ -37,6 +39,24 @@ type storeClient struct {
 
 func NewStoreClient(cc grpc.ClientConnInterface) StoreClient {
 	return &storeClient{cc}
+}
+
+func (c *storeClient) Configure(ctx context.Context, in *plugin.ConfigureRequest, opts ...grpc.CallOption) (*plugin.ConfigureResponse, error) {
+	out := new(plugin.ConfigureResponse)
+	err := c.cc.Invoke(ctx, "/spire.server.store.Store/Configure", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *storeClient) GetPluginInfo(ctx context.Context, in *plugin.GetPluginInfoRequest, opts ...grpc.CallOption) (*plugin.GetPluginInfoResponse, error) {
+	out := new(plugin.GetPluginInfoResponse)
+	err := c.cc.Invoke(ctx, "/spire.server.store.Store/GetPluginInfo", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (c *storeClient) Get(ctx context.Context, in *GetRequest, opts ...grpc.CallOption) (*GetResponse, error) {
@@ -75,18 +95,9 @@ func (c *storeClient) Delete(ctx context.Context, in *DeleteRequest, opts ...grp
 	return out, nil
 }
 
-func (c *storeClient) Configure(ctx context.Context, in *plugin.ConfigureRequest, opts ...grpc.CallOption) (*plugin.ConfigureResponse, error) {
-	out := new(plugin.ConfigureResponse)
-	err := c.cc.Invoke(ctx, "/spire.server.store.Store/Configure", in, out, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *storeClient) GetPluginInfo(ctx context.Context, in *plugin.GetPluginInfoRequest, opts ...grpc.CallOption) (*plugin.GetPluginInfoResponse, error) {
-	out := new(plugin.GetPluginInfoResponse)
-	err := c.cc.Invoke(ctx, "/spire.server.store.Store/GetPluginInfo", in, out, opts...)
+func (c *storeClient) Transaction(ctx context.Context, in *TransactionRequest, opts ...grpc.CallOption) (*TransactionResponse, error) {
+	out := new(TransactionResponse)
+	err := c.cc.Invoke(ctx, "/spire.server.store.Store/Transaction", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -97,6 +108,10 @@ func (c *storeClient) GetPluginInfo(ctx context.Context, in *plugin.GetPluginInf
 // All implementations must embed UnimplementedStoreServer
 // for forward compatibility
 type StoreServer interface {
+	// Applies the plugin configuration
+	Configure(context.Context, *plugin.ConfigureRequest) (*plugin.ConfigureResponse, error)
+	// Returns the version and related metadata of the installed plugin
+	GetPluginInfo(context.Context, *plugin.GetPluginInfoRequest) (*plugin.GetPluginInfoResponse, error)
 	// Get one or more entries
 	Get(context.Context, *GetRequest) (*GetResponse, error)
 	// Put one or more entries
@@ -104,10 +119,8 @@ type StoreServer interface {
 	Update(context.Context, *PutRequest) (*PutResponse, error)
 	// Delete one or more entries
 	Delete(context.Context, *DeleteRequest) (*DeleteResponse, error)
-	// Applies the plugin configuration
-	Configure(context.Context, *plugin.ConfigureRequest) (*plugin.ConfigureResponse, error)
-	// Returns the version and related metadata of the installed plugin
-	GetPluginInfo(context.Context, *plugin.GetPluginInfoRequest) (*plugin.GetPluginInfoResponse, error)
+	// Perform different operations in a single transaction
+	Transaction(context.Context, *TransactionRequest) (*TransactionResponse, error)
 	mustEmbedUnimplementedStoreServer()
 }
 
@@ -115,6 +128,12 @@ type StoreServer interface {
 type UnimplementedStoreServer struct {
 }
 
+func (UnimplementedStoreServer) Configure(context.Context, *plugin.ConfigureRequest) (*plugin.ConfigureResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Configure not implemented")
+}
+func (UnimplementedStoreServer) GetPluginInfo(context.Context, *plugin.GetPluginInfoRequest) (*plugin.GetPluginInfoResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetPluginInfo not implemented")
+}
 func (UnimplementedStoreServer) Get(context.Context, *GetRequest) (*GetResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Get not implemented")
 }
@@ -127,11 +146,8 @@ func (UnimplementedStoreServer) Update(context.Context, *PutRequest) (*PutRespon
 func (UnimplementedStoreServer) Delete(context.Context, *DeleteRequest) (*DeleteResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Delete not implemented")
 }
-func (UnimplementedStoreServer) Configure(context.Context, *plugin.ConfigureRequest) (*plugin.ConfigureResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method Configure not implemented")
-}
-func (UnimplementedStoreServer) GetPluginInfo(context.Context, *plugin.GetPluginInfoRequest) (*plugin.GetPluginInfoResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method GetPluginInfo not implemented")
+func (UnimplementedStoreServer) Transaction(context.Context, *TransactionRequest) (*TransactionResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Transaction not implemented")
 }
 func (UnimplementedStoreServer) mustEmbedUnimplementedStoreServer() {}
 
@@ -144,6 +160,42 @@ type UnsafeStoreServer interface {
 
 func RegisterStoreServer(s grpc.ServiceRegistrar, srv StoreServer) {
 	s.RegisterService(&_Store_serviceDesc, srv)
+}
+
+func _Store_Configure_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(plugin.ConfigureRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StoreServer).Configure(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/spire.server.store.Store/Configure",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StoreServer).Configure(ctx, req.(*plugin.ConfigureRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Store_GetPluginInfo_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(plugin.GetPluginInfoRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StoreServer).GetPluginInfo(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/spire.server.store.Store/GetPluginInfo",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StoreServer).GetPluginInfo(ctx, req.(*plugin.GetPluginInfoRequest))
+	}
+	return interceptor(ctx, in, info, handler)
 }
 
 func _Store_Get_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
@@ -218,38 +270,20 @@ func _Store_Delete_Handler(srv interface{}, ctx context.Context, dec func(interf
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Store_Configure_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(plugin.ConfigureRequest)
+func _Store_Transaction_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TransactionRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(StoreServer).Configure(ctx, in)
+		return srv.(StoreServer).Transaction(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/spire.server.store.Store/Configure",
+		FullMethod: "/spire.server.store.Store/Transaction",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(StoreServer).Configure(ctx, req.(*plugin.ConfigureRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _Store_GetPluginInfo_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(plugin.GetPluginInfoRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(StoreServer).GetPluginInfo(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: "/spire.server.store.Store/GetPluginInfo",
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(StoreServer).GetPluginInfo(ctx, req.(*plugin.GetPluginInfoRequest))
+		return srv.(StoreServer).Transaction(ctx, req.(*TransactionRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -258,6 +292,14 @@ var _Store_serviceDesc = grpc.ServiceDesc{
 	ServiceName: "spire.server.store.Store",
 	HandlerType: (*StoreServer)(nil),
 	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "Configure",
+			Handler:    _Store_Configure_Handler,
+		},
+		{
+			MethodName: "GetPluginInfo",
+			Handler:    _Store_GetPluginInfo_Handler,
+		},
 		{
 			MethodName: "Get",
 			Handler:    _Store_Get_Handler,
@@ -275,12 +317,8 @@ var _Store_serviceDesc = grpc.ServiceDesc{
 			Handler:    _Store_Delete_Handler,
 		},
 		{
-			MethodName: "Configure",
-			Handler:    _Store_Configure_Handler,
-		},
-		{
-			MethodName: "GetPluginInfo",
-			Handler:    _Store_GetPluginInfo_Handler,
+			MethodName: "Transaction",
+			Handler:    _Store_Transaction_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

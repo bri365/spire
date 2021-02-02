@@ -33,8 +33,8 @@ func (s *PluginSuite) TestBundleCRUD() {
 
 	// delete non-existent
 	_, err = s.shim.DeleteBundle(ctx, &datastore.DeleteBundleRequest{TrustDomainId: "spiffe://foo"})
-	s.Equal(codes.NotFound, status.Code(err))
-	s.RequireGRPCStatus(err, codes.NotFound, _notFoundErrMsg)
+	s.Equal(codes.Aborted, status.Code(err))
+	s.RequireGRPCStatus(err, codes.Aborted, "store-etcd: missing or incorrect version")
 
 	// create
 	_, err = s.shim.CreateBundle(ctx, &datastore.CreateBundleRequest{

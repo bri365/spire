@@ -4,6 +4,21 @@ option go_package = "github.com/spiffe/spire/proto/spire/server/store";
 
 import "spire/common/plugin/plugin.proto";
 
+// Compare defines how Version is used in transactions.
+enum Compare {
+    // Default, no kv version check for the operation.
+    NONE = 0;
+
+    // Ensure the given key(s) do not already exist in the store.
+    NOT_PRESENT = 1;
+
+    // Ensure the given key(s) already exist in the store.
+    PRESENT = 2;
+
+    // Ensure the current version of the given key(s) exactly matches the supplied version.
+    EQUALS = 3;
+}
+
 message KeyValue {
     // The requested or returned key.
     string key = 1;
@@ -18,7 +33,11 @@ message KeyValue {
     int64 mod_revision = 4;
 
     // The returned version of the item for the requested operation.
+    // Version may also be set for delete, put, or transaction operations.
     int64 version = 5;
+
+    // Compare defines how Version is handled in transactions.
+    Compare compare = 6;
 }
 
 message Range {
@@ -75,7 +94,7 @@ message GetResponse {
   }
 
 message PutRequest {
-    // KVs to be written; revision and version fields are ignored.
+    // KVs to be written as a single transaction.
     repeated KeyValue kvs = 1;
 
     // Expiration in seconds since unix epoch, applied to all items
@@ -88,16 +107,49 @@ message PutResponse {
 }
 
 message DeleteRequest {
-    // One or more ranges of keys to be deleted.
-    repeated Range ranges = 1;
+    // One or more KVs and/or one range to be deleted as a single transaction.
+	// KV version of -1 for no compare, 0 to ensure key exists, > 0 to confirm current version.
+    repeated KeyValue kvs = 1;
+    Range range = 2;
 }
 
 message DeleteResponse {
     // The store revision after the request was applied.
     int64 revision = 1;
 
-    // Releted is the number of keys deleted by the delete range request.
+    // The number of keys deleted by the delete range request.
     int64 deleted = 2;
+}
+
+// Operation defines the action to be taken for the given keys as part of the transaction.
+enum Operation {
+    // Add a comparison constraint to the transaction without any action.
+    COMPARE = 0;
+
+    // Delete the assocaiated key(s), constrained by Version, if present in kvs.
+    DELETE = 1;
+
+    // Create or update the associated key(s), constrained by Version, if present in kvs.
+    PUT = 2;
+}
+
+// Transactions allow operations of different types (delete or put) to be performed together.
+message TransactionElement {
+    // Operation to be performed.
+    Operation operation = 1;
+
+    // One or more keys, with values or versions as needed.
+    repeated KeyValue kvs = 2;
+}
+
+message TransactionRequest {
+    // One or more operation elements to be performed as a single transaction.
+    repeated TransactionElement elements = 1;
+}
+
+message TransactionResponse {
+    // The store revision after the request was applied.
+    int64 revision = 1;
 }
 
 
@@ -106,6 +158,12 @@ message DeleteResponse {
 /////////////////////////////////////////////////////////////////////////////
 
 service Store {
+    // Applies the plugin configuration
+    rpc Configure(spire.common.plugin.ConfigureRequest) returns (spire.common.plugin.ConfigureResponse);
+
+    // Returns the version and related metadata of the installed plugin
+    rpc GetPluginInfo(spire.common.plugin.GetPluginInfoRequest) returns (spire.common.plugin.GetPluginInfoResponse);
+
     // Get one or more entries
     rpc Get(GetRequest) returns (GetResponse);
 
@@ -116,8 +174,6 @@ service Store {
     // Delete one or more entries
     rpc Delete(DeleteRequest) returns (DeleteResponse);
 
-    // Applies the plugin configuration
-    rpc Configure(spire.common.plugin.ConfigureRequest) returns (spire.common.plugin.ConfigureResponse);
-    // Returns the version and related metadata of the installed plugin
-    rpc GetPluginInfo(spire.common.plugin.GetPluginInfoRequest) returns (spire.common.plugin.GetPluginInfoResponse);
+    // Perform different operations in a single transaction
+    rpc Transaction(TransactionRequest) returns (TransactionResponse);
 }

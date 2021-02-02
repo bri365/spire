@@ -80,7 +80,7 @@ func (s *Shim) DeleteRegistrationEntry(ctx context.Context,
 	}
 
 	// TODO delete index records
-	_, err := s.Store.Delete(ctx, &store.DeleteRequest{Ranges: []*store.Range{{Key: entryKey(req.EntryId)}}})
+	_, err := s.Store.Delete(ctx, &store.DeleteRequest{Kvs: []*store.KeyValue{{Key: entryKey(req.EntryId)}}})
 	if err != nil {
 		return nil, err
 	}

@@ -106,7 +106,7 @@ func (s *Shim) DeleteBundle(ctx context.Context,
 	}
 
 	_, err = s.Store.Delete(ctx, &store.DeleteRequest{
-		Ranges: []*store.Range{{Key: bundleKey(trustDomainID)}},
+		Kvs: []*store.KeyValue{{Key: bundleKey(trustDomainID)}},
 	})
 	if err != nil {
 		return nil, err
