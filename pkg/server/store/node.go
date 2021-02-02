@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"sort"
 	"strings"
 
@@ -61,7 +62,7 @@ func (s *Shim) CreateAttestedNode(ctx context.Context,
 	kvs = append(kvs, &store.KeyValue{Key: nodeBanKey(node.SpiffeId, node.CertSerialNumber)})
 	kvs = append(kvs, &store.KeyValue{Key: nodeAdtKey(node.SpiffeId, node.AttestationDataType)})
 
-	// Create index records for selectors
+	// Create index records for individual selectors
 	for _, sel := range node.Selectors {
 		kvs = append(kvs, &store.KeyValue{Key: nodeSelKey(node.SpiffeId, sel)})
 	}
@@ -175,16 +176,18 @@ func (s *Shim) ListAttestedNodes(ctx context.Context,
 		return nil, status.Error(codes.InvalidArgument, "cannot list by empty selectors set")
 	}
 
-	// NOTE: while it is possible to use the store revision from first call in subsequent calls
-	// to ensure transactional consistency of index and item read operations, the current
-	// implementation should suffice as the resulting node list is the intersection of indices
-	// so added nodes won't appear, and empty fetches are not errors, so deleted nodes will not
-	// appear either.
+	// Get the current store revision for use in subsequent calls to ensure
+	// transactional consistency of all item and index read operations.
+	res, err := s.Store.Get(ctx, &store.GetRequest{Key: nodePrefix, End: allNodes, Limit: 1})
+	if err != nil {
+		return nil, err
+	}
+	rev := res.Revision
+
 	idMaps := []map[string]bool{}
 
 	if req.ByAttestationType != "" {
-		s.log.Info(fmt.Sprintf("By attestation type %s", req.ByAttestationType))
-		ids, err := s.nodeAdtMap(ctx, req.ByAttestationType)
+		ids, err := s.nodeAdtMap(ctx, rev, req.ByAttestationType)
 		if err != nil {
 			return nil, err
 		}
@@ -192,8 +195,7 @@ func (s *Shim) ListAttestedNodes(ctx context.Context,
 	}
 
 	if req.ByBanned != nil {
-		s.log.Info(fmt.Sprintf("By banned %t", req.ByBanned.Value))
-		ids, err := s.nodeBanMap(ctx, req.ByBanned.Value)
+		ids, err := s.nodeBanMap(ctx, rev, req.ByBanned.Value)
 		if err != nil {
 			return nil, err
 		}
@@ -201,8 +203,7 @@ func (s *Shim) ListAttestedNodes(ctx context.Context,
 	}
 
 	if req.ByExpiresBefore != nil {
-		s.log.Info(fmt.Sprintf("By expires before %d", req.ByExpiresBefore.Value))
-		ids, err := s.nodeExpMap(ctx, req.ByExpiresBefore.Value)
+		ids, err := s.nodeExpMap(ctx, rev, req.ByExpiresBefore.Value)
 		if err != nil {
 			return nil, err
 		}
@@ -210,18 +211,19 @@ func (s *Shim) ListAttestedNodes(ctx context.Context,
 	}
 
 	if req.BySelectorMatch != nil {
-		s.log.Info(fmt.Sprintf("By selector %v %v", req.BySelectorMatch.Match, req.BySelectorMatch.Selectors))
 		subset := map[string]bool{}
 		for _, sel := range req.BySelectorMatch.Selectors {
-			ids, err := s.nodeSelMap(ctx, req.BySelectorMatch.Match, sel)
+			ids, err := s.nodeSelMap(ctx, rev, sel)
 			if err != nil {
 				return nil, err
 			}
 			if req.BySelectorMatch.Match == datastore.BySelectors_MATCH_EXACT {
-				// Intersection of selectors, just add each selector result to idMaps
+				// The given selectors are the complete set for a node to match
 				idMaps = append(idMaps, ids)
 			} else if req.BySelectorMatch.Match == datastore.BySelectors_MATCH_SUBSET {
-				// Union of returned SpiffieIDs, build combined map from all selectors
+				// The given selectors are a subset (up to all) of a node
+				// or a subset of the given selectors match the total selectors of a node.
+				// Adding these together results in an overly optimistic node list which is culled later.
 				for id := range ids {
 					subset[id] = true
 				}
@@ -235,9 +237,7 @@ func (s *Shim) ListAttestedNodes(ctx context.Context,
 	}
 
 	count := len(idMaps)
-	s.log.Info(fmt.Sprintf("%d node list(s) in idMaps", count))
 	if count > 1 {
-		s.log.Info(fmt.Sprintf("idMaps %v", idMaps))
 		// intersect query maps into the first one
 		for i := 1; i < count; i++ {
 			tmp := map[string]bool{}
@@ -249,16 +249,6 @@ func (s *Shim) ListAttestedNodes(ctx context.Context,
 			}
 			idMaps[0] = tmp
 		}
-	}
-
-	// Create a sorted list of node IDs from resulting map
-	ids := []string{}
-	if count > 0 {
-		s.log.Info(fmt.Sprintf("idMaps[0] %v", idMaps[0]))
-		for id := range idMaps[0] {
-			ids = append(ids, id)
-		}
-		sort.Strings(ids)
 	}
 
 	key := nodeKey("")
@@ -273,26 +263,30 @@ func (s *Shim) ListAttestedNodes(ctx context.Context,
 			}
 			// TODO one bit larger than token
 			key = fmt.Sprintf("%s!", p.Token)
-			s.log.Info(fmt.Sprintf("received token, key = %v", key))
 		}
 	}
 
 	lastKey := ""
 	resp := &datastore.ListAttestedNodesResponse{}
 	if count > 0 {
-		// Get the specified list of nodes
+		// Create a sorted list of node IDs from resulting filter map
+		ids := []string{}
+		for id := range idMaps[0] {
+			ids = append(ids, id)
+		}
+		sort.Strings(ids)
+
+		// Get the specified list of nodes from the query filters.
 		// NOTE: looping will not scale to desired limits; these should be served from cache
 		// An interim approach would be to send batches of reads as a single transaction. Batches
 		// would be PageSize if paginated or a few hundred to a thousand at a time.
 		var i int64 = 1
 		for _, id := range ids {
 			if p != nil && len(p.Token) > 0 && nodeKey(id) < key {
-				s.log.Info(fmt.Sprintf("skipping %s", id))
 				continue
 			}
 
-			s.log.Info(fmt.Sprintf("getting %s", id))
-			res, err := s.Store.Get(ctx, &store.GetRequest{Key: nodeKey(id)})
+			res, err := s.Store.Get(ctx, &store.GetRequest{Key: nodeKey(id), Revision: rev})
 			if err != nil {
 				return nil, err
 			}
@@ -303,13 +297,17 @@ func (s *Shim) ListAttestedNodes(ctx context.Context,
 				if err != nil {
 					return nil, err
 				}
-				if req.BySelectorMatch == nil && req.FetchSelectors == false {
+				if req.BySelectorMatch != nil {
+					if !s.selectorMatch(node, req.BySelectorMatch) {
+						continue
+					}
+				} else if req.FetchSelectors == false {
+					// Do not return selectors if not requested or filtered by.
 					node.Selectors = nil
 				}
 				resp.Nodes = append(resp.Nodes, node)
 				lastKey = nodeKey(node.SpiffeId)
 
-				// s.log.Info(fmt.Sprintf("i = %d  limit = %d", i, limit))
 				if limit > 0 && i == limit {
 					break
 				}
@@ -319,7 +317,7 @@ func (s *Shim) ListAttestedNodes(ctx context.Context,
 	} else {
 		// No query constraints, get all nodes up to limit
 		end := allNodes
-		res, err := s.Store.Get(ctx, &store.GetRequest{Key: key, End: end, Limit: limit})
+		res, err := s.Store.Get(ctx, &store.GetRequest{Key: key, End: end, Limit: limit, Revision: rev})
 		if err != nil {
 			return nil, err
 		}
@@ -465,11 +463,11 @@ func nodeAdtID(key string) (string, error) {
 
 // nodeAdtList returns a map of attested node ids by attestation data type
 // The map facilitates easier intersection with other queries
-func (s *Shim) nodeAdtMap(ctx context.Context, adt string) (map[string]bool, error) {
+func (s *Shim) nodeAdtMap(ctx context.Context, rev int64, adt string) (map[string]bool, error) {
 	key := fmt.Sprintf("%s%s%s%s%s%s", indexKeyID, nodePrefix, ADT, delim, adt, delim)
 	end := fmt.Sprintf("%s%s%s%s%s%s", indexKeyID, nodePrefix, ADT, delim, adt, delend)
 
-	res, err := s.Store.Get(ctx, &store.GetRequest{Key: key, End: end})
+	res, err := s.Store.Get(ctx, &store.GetRequest{Key: key, End: end, Revision: rev})
 	if err != nil {
 		return nil, err
 	}
@@ -507,7 +505,7 @@ func nodeBanID(key string) (string, error) {
 
 // nodeBanList returns a map of attested node ids that are either banned or not
 // The map facilitates easier intersection with other queries
-func (s *Shim) nodeBanMap(ctx context.Context, ban bool) (map[string]bool, error) {
+func (s *Shim) nodeBanMap(ctx context.Context, rev int64, ban bool) (map[string]bool, error) {
 	b := 0
 	if ban {
 		b = 1
@@ -515,7 +513,7 @@ func (s *Shim) nodeBanMap(ctx context.Context, ban bool) (map[string]bool, error
 	key := fmt.Sprintf("%s%s%s%s%d%s", indexKeyID, nodePrefix, BAN, delim, b, delim)
 	end := fmt.Sprintf("%s%s%s%s%d", indexKeyID, nodePrefix, BAN, delim, b+1)
 
-	res, err := s.Store.Get(ctx, &store.GetRequest{Key: key, End: end})
+	res, err := s.Store.Get(ctx, &store.GetRequest{Key: key, End: end, Revision: rev})
 	if err != nil {
 		return nil, err
 	}
@@ -550,11 +548,11 @@ func nodeExpID(key string) (string, error) {
 
 // nodeExpList returns a map of attested node ids expiring before the given expiry
 // The map facilitates easier intersection with other queries
-func (s *Shim) nodeExpMap(ctx context.Context, exp int64) (map[string]bool, error) {
+func (s *Shim) nodeExpMap(ctx context.Context, rev, exp int64) (map[string]bool, error) {
 	key := fmt.Sprintf("%s%s%s%s", indexKeyID, nodePrefix, EXP, delim)
 	end := fmt.Sprintf("%s%s%s%s%d", indexKeyID, nodePrefix, EXP, delim, exp)
 
-	res, err := s.Store.Get(ctx, &store.GetRequest{Key: key, End: end})
+	res, err := s.Store.Get(ctx, &store.GetRequest{Key: key, End: end, Revision: rev})
 	if err != nil {
 		return nil, err
 	}
@@ -573,8 +571,8 @@ func (s *Shim) nodeExpMap(ctx context.Context, exp int64) (map[string]bool, erro
 
 // nodeSelKey returns a string formatted key for an attested node indexed by selector type and value
 func nodeSelKey(id string, s *common.Selector) string {
-	// e.g. "IN|TVS|type|value|spiffie://example.com/clusterA/nodeN"
-	return fmt.Sprintf("%s%s%s%s%s%s%s%s%s", indexKeyID, nodePrefix, TVS, delim, s.Type, delim, s.Value, delim, id)
+	// e.g. "IN|TVI|type|value|spiffie://example.com/clusterA/nodeN"
+	return fmt.Sprintf("%s%s%s%s%s%s%s%s%s", indexKeyID, nodePrefix, TVI, delim, s.Type, delim, s.Value, delim, id)
 }
 
 // nodeSelID returns the attested node id from the given selector index key
@@ -588,13 +586,12 @@ func nodeSelID(key string) (string, error) {
 
 // nodeSelList returns a map of attested node ids by selector match
 // The map facilitates easier intersection with other queries
-func (s *Shim) nodeSelMap(ctx context.Context,
-	m datastore.BySelectors_MatchBehavior, sel *common.Selector) (map[string]bool, error) {
+func (s *Shim) nodeSelMap(ctx context.Context, rev int64, sel *common.Selector) (map[string]bool, error) {
 
-	key := fmt.Sprintf("%s%s%s%s%s%s%s%s", indexKeyID, nodePrefix, TVS, delim, sel.Type, delim, sel.Value, delim)
-	end := fmt.Sprintf("%s%s%s%s%s%s%s%s", indexKeyID, nodePrefix, TVS, delim, sel.Type, delim, sel.Value, delend)
+	key := fmt.Sprintf("%s%s%s%s%s%s%s%s", indexKeyID, nodePrefix, TVI, delim, sel.Type, delim, sel.Value, delim)
+	end := fmt.Sprintf("%s%s%s%s%s%s%s%s", indexKeyID, nodePrefix, TVI, delim, sel.Type, delim, sel.Value, delend)
 
-	res, err := s.Store.Get(ctx, &store.GetRequest{Key: key, End: end})
+	res, err := s.Store.Get(ctx, &store.GetRequest{Key: key, End: end, Revision: rev})
 	if err != nil {
 		return nil, err
 	}
@@ -605,11 +602,61 @@ func (s *Shim) nodeSelMap(ctx context.Context,
 		if err != nil {
 			return nil, err
 		}
-		if m == datastore.BySelectors_MATCH_SUBSET {
-			// TODO implement selector match exact (all match) or subset (any match)
-		}
 		ids[id] = true
 	}
 
 	return ids, nil
+}
+
+// selectorMatch verifies the node selectors properly match the requested selectors as follows:
+//   - Exact match is true if both lists are identical
+//   - Subset match is true if all requested selectors are present in node
+//   - Subset match is true if all node selectors are present in requested selectors
+func (s *Shim) selectorMatch(node *common.AttestedNode, sm *datastore.BySelectors) bool {
+	ns := selectorMap(node.Selectors)
+	rs := selectorMap(sm.Selectors)
+	if sm.Match == datastore.BySelectors_MATCH_EXACT {
+		if reflect.DeepEqual(ns, rs) {
+			return true
+		}
+	} else if sm.Match == datastore.BySelectors_MATCH_SUBSET {
+		// Do all request selectors exist in node selectors?
+		rm := true
+		for rt, rv := range rs {
+			nv, ok := ns[rt]
+			if ok {
+				if nv != rv {
+					rm = false
+				}
+			} else {
+				rm = false
+			}
+		}
+		// Do all node selectors exist in request selectors?
+		nm := true
+		for nt, nv := range ns {
+			rv, ok := rs[nt]
+			if ok {
+				if rv != nv {
+					nm = false
+				}
+			} else {
+				nm = false
+			}
+		}
+		if rm || nm {
+			return true
+		}
+	} else {
+		s.log.Warn(fmt.Sprintf("Unknown match %v", sm.Match))
+	}
+	return false
+}
+
+func selectorMap(selectors []*common.Selector) map[string]string {
+	sm := map[string]string{}
+	for _, sel := range selectors {
+		sm[sel.Type] = sel.Value
+	}
+	return sm
 }

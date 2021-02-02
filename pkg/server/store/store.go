@@ -42,18 +42,19 @@ const (
 	bundleKeyID = "B"
 	entryKeyID  = "E"
 	nodeKeyID   = "N"
+	selKeyID    = "S"
 	tokenKeyID  = "T"
 
 	// Index field identifiers
-	// NOTE: these could theoretically be reflected from protobufs but that feels like overkill
+	// NOTE: these could theoretically be reflected from protobufs but that
+	// feels like overkill and would be less readable for debugging.
 	ADT = "ADT" // AttestationDataType
 	CNA = "CNA" // CertNotAfter
 	BAN = "BAN" // Banned (CertSerialNumber empty or not)
 	EXP = "EXP" // Expiry
 	PID = "PID" // ParentId
 	SID = "SID" // SpiffeId
-	TVR = "TVR" // Type-Value-RegisteredEntryID
-	TVS = "TVS" // Type-Value-SpiffieID
+	TVI = "TVI" // Type-Value-ID
 )
 
 var (
@@ -67,9 +68,11 @@ var (
 	bundlePrefix = fmt.Sprintf("%s%s", bundleKeyID, delim)
 	entryPrefix  = fmt.Sprintf("%s%s", entryKeyID, delim)
 	nodePrefix   = fmt.Sprintf("%s%s", nodeKeyID, delim)
+	selPrefix    = fmt.Sprintf("%s%s", selKeyID, delim)
 	allBundles   = fmt.Sprintf("%s%s", bundleKeyID, delend)
 	allEntries   = fmt.Sprintf("%s%s", entryKeyID, delend)
 	allNodes     = fmt.Sprintf("%s%s", nodeKeyID, delend)
+	allSelectors = fmt.Sprintf("%s%s", selKeyID, delend)
 )
 
 // New returns an initialized storage shim.
