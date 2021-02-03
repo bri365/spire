@@ -1,6 +1,9 @@
 package etcd
 
 import (
+	"fmt"
+	"strconv"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -8,7 +11,9 @@ import (
 	"github.com/spiffe/spire/proto/spire/common"
 	"github.com/spiffe/spire/test/spiretest"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
@@ -598,7 +603,6 @@ func (s *PluginSuite) TestFetchAttestedNodesWithPagination() {
 	for _, test := range tests {
 		test := test
 		s.T().Run(test.name, func(t *testing.T) {
-			s.T().Logf("test: %v", test.name)
 			resp, err := s.shim.ListAttestedNodes(ctx, test.req)
 			if test.expectedErr != "" {
 				require.EqualError(t, err, test.expectedErr)
@@ -611,8 +615,6 @@ func (s *PluginSuite) TestFetchAttestedNodesWithPagination() {
 				Nodes:      test.expectedList,
 				Pagination: test.expectedPagination,
 			}
-			s.T().Logf("expected: %v", expectedResponse)
-			s.T().Logf("received: %v", resp)
 			spiretest.RequireProtoEqual(t, expectedResponse, resp)
 		})
 	}
@@ -625,4 +627,357 @@ func (s *PluginSuite) TestFetchAttestedNodesWithPagination() {
 	})
 	s.Require().Nil(resp)
 	s.Require().Error(err, "could not parse token 'invalid int'")
+}
+
+func (s *PluginSuite) TestUpdateAttestedNode() {
+	// Current nodes values
+	nodeID := "node1"
+	attestationType := "attestation-data-type"
+	serial := "cert-serial-number-1"
+	expires := int64(1)
+	newSerial := "new-cert-serial-number"
+	newExpires := int64(2)
+
+	// Updated nodes values
+	updatedSerial := "cert-serial-number-2"
+	updatedExpires := int64(3)
+	updatedNewSerial := ""
+	updatedNewExpires := int64(0)
+
+	tests := []struct {
+		name           string
+		updateReq      *datastore.UpdateAttestedNodeRequest
+		expUpdatedNode *common.AttestedNode
+		expCode        codes.Code
+		expMsg         string
+	}{
+		{
+			name: "update non-existing attested node",
+			updateReq: &datastore.UpdateAttestedNodeRequest{
+				SpiffeId:         "non-existent-node-id",
+				CertSerialNumber: updatedSerial,
+				CertNotAfter:     updatedExpires,
+			},
+			expCode: codes.NotFound,
+			expMsg:  _notFoundErrMsg,
+		},
+		{
+			name: "update attested node with all false mask",
+			updateReq: &datastore.UpdateAttestedNodeRequest{
+				SpiffeId:            nodeID,
+				CertSerialNumber:    updatedSerial,
+				CertNotAfter:        updatedExpires,
+				NewCertNotAfter:     updatedNewExpires,
+				NewCertSerialNumber: updatedNewSerial,
+				InputMask:           &common.AttestedNodeMask{},
+			},
+			expUpdatedNode: &common.AttestedNode{
+				SpiffeId:            nodeID,
+				AttestationDataType: attestationType,
+				CertSerialNumber:    serial,
+				CertNotAfter:        expires,
+				NewCertNotAfter:     newExpires,
+				NewCertSerialNumber: newSerial,
+			},
+		},
+		{
+			name: "update attested node with mask set only some fields: 'CertSerialNumber', 'NewCertNotAfter'",
+			updateReq: &datastore.UpdateAttestedNodeRequest{
+				SpiffeId:            nodeID,
+				CertSerialNumber:    updatedSerial,
+				CertNotAfter:        updatedExpires,
+				NewCertNotAfter:     updatedNewExpires,
+				NewCertSerialNumber: updatedNewSerial,
+				InputMask: &common.AttestedNodeMask{
+					CertSerialNumber: true,
+					NewCertNotAfter:  true,
+				},
+			},
+			expUpdatedNode: &common.AttestedNode{
+				SpiffeId:            nodeID,
+				AttestationDataType: attestationType,
+				CertSerialNumber:    updatedSerial,
+				CertNotAfter:        expires,
+				NewCertNotAfter:     updatedNewExpires,
+				NewCertSerialNumber: newSerial,
+			},
+		},
+		{
+			name: "update attested node with nil mask",
+			updateReq: &datastore.UpdateAttestedNodeRequest{
+				SpiffeId:            nodeID,
+				CertSerialNumber:    updatedSerial,
+				CertNotAfter:        updatedExpires,
+				NewCertNotAfter:     updatedNewExpires,
+				NewCertSerialNumber: updatedNewSerial,
+			},
+			expUpdatedNode: &common.AttestedNode{
+				SpiffeId:            nodeID,
+				AttestationDataType: attestationType,
+				CertSerialNumber:    updatedSerial,
+				CertNotAfter:        updatedExpires,
+				NewCertNotAfter:     updatedNewExpires,
+				NewCertSerialNumber: updatedNewSerial,
+			},
+		},
+	}
+	for _, test := range tests {
+		test := test
+		s.T().Run(test.name, func(t *testing.T) {
+			s.T().Log(test.name)
+			node := &common.AttestedNode{
+				SpiffeId:            nodeID,
+				AttestationDataType: attestationType,
+				CertSerialNumber:    serial,
+				CertNotAfter:        expires,
+				NewCertNotAfter:     newExpires,
+				NewCertSerialNumber: newSerial,
+			}
+			s.shim.DeleteAttestedNode(ctx, &datastore.DeleteAttestedNodeRequest{SpiffeId: nodeID})
+
+			_, err := s.shim.CreateAttestedNode(ctx, &datastore.CreateAttestedNodeRequest{Node: node})
+			s.Require().NoError(err)
+
+			// Update attested node
+			uresp, err := s.shim.UpdateAttestedNode(ctx, test.updateReq)
+			s.RequireGRPCStatus(err, test.expCode, test.expMsg)
+			if test.expCode != codes.OK {
+				s.Require().Nil(uresp)
+				return
+			}
+			s.Require().NoError(err)
+			s.Require().NotNil(uresp)
+			s.RequireProtoEqual(test.expUpdatedNode, uresp.Node)
+
+			// Check a fresh fetch shows the updated attested node
+			fresp, err := s.shim.FetchAttestedNode(ctx, &datastore.FetchAttestedNodeRequest{SpiffeId: test.updateReq.SpiffeId})
+			s.Require().NoError(err)
+			s.Require().NotNil(fresp)
+			s.RequireProtoEqual(test.expUpdatedNode, fresp.Node)
+		})
+	}
+}
+
+func (s *PluginSuite) TestDeleteAttestedNode() {
+	entry := &common.AttestedNode{
+		SpiffeId:            "foo",
+		AttestationDataType: "aws-tag",
+		CertSerialNumber:    "badcafe",
+		CertNotAfter:        time.Now().Add(time.Hour).Unix(),
+	}
+
+	// delete it before it exists
+	_, err := s.shim.DeleteAttestedNode(ctx, &datastore.DeleteAttestedNodeRequest{SpiffeId: entry.SpiffeId})
+	s.RequireGRPCStatus(err, codes.NotFound, _notFoundErrMsg)
+
+	_, err = s.shim.CreateAttestedNode(ctx, &datastore.CreateAttestedNodeRequest{Node: entry})
+	s.Require().NoError(err)
+
+	dresp, err := s.shim.DeleteAttestedNode(ctx, &datastore.DeleteAttestedNodeRequest{SpiffeId: entry.SpiffeId})
+	s.Require().NoError(err)
+	s.AssertProtoEqual(entry, dresp.Node)
+
+	fresp, err := s.shim.FetchAttestedNode(ctx, &datastore.FetchAttestedNodeRequest{SpiffeId: entry.SpiffeId})
+	s.Require().NoError(err)
+	s.Nil(fresp.Node)
+}
+
+func (s *PluginSuite) TestNodeSelectors() {
+	node1 := &common.AttestedNode{
+		SpiffeId:            "foo",
+		AttestationDataType: "aws-tag",
+		CertSerialNumber:    "badcafe",
+		CertNotAfter:        time.Now().Add(time.Hour).Unix(),
+	}
+
+	node2 := &common.AttestedNode{
+		SpiffeId:            "bar",
+		AttestationDataType: "aws-tag",
+		CertSerialNumber:    "badcafe",
+		CertNotAfter:        time.Now().Add(time.Hour).Unix(),
+	}
+
+	foo1 := []*common.Selector{
+		{Type: "FOO1", Value: "1"},
+	}
+	foo2 := []*common.Selector{
+		{Type: "FOO2", Value: "1"},
+	}
+	bar := []*common.Selector{
+		{Type: "BAR", Value: "FIGHT"},
+	}
+
+	_, err := s.shim.CreateAttestedNode(ctx, &datastore.CreateAttestedNodeRequest{Node: node1})
+	s.Require().NoError(err)
+
+	_, err = s.shim.CreateAttestedNode(ctx, &datastore.CreateAttestedNodeRequest{Node: node2})
+	s.Require().NoError(err)
+
+	// assert there are no selectors for foo
+	selectors := s.getNodeSelectors("foo", true)
+	s.Require().Empty(selectors)
+	selectors = s.getNodeSelectors("foo", false)
+	s.Require().Empty(selectors)
+
+	// set selectors on foo and bar
+	s.setNodeSelectors("foo", foo1)
+	s.setNodeSelectors("bar", bar)
+
+	// get foo selectors
+	selectors = s.getNodeSelectors("foo", true)
+	s.RequireProtoListEqual(foo1, selectors)
+	selectors = s.getNodeSelectors("foo", false)
+	s.RequireProtoListEqual(foo1, selectors)
+
+	// replace foo selectors
+	s.setNodeSelectors("foo", foo2)
+	selectors = s.getNodeSelectors("foo", true)
+	s.RequireProtoListEqual(foo2, selectors)
+	selectors = s.getNodeSelectors("foo", false)
+	s.RequireProtoListEqual(foo2, selectors)
+
+	// delete foo selectors
+	s.setNodeSelectors("foo", nil)
+	selectors = s.getNodeSelectors("foo", true)
+	s.Require().Empty(selectors)
+	selectors = s.getNodeSelectors("foo", false)
+	s.Require().Empty(selectors)
+
+	// get bar selectors (make sure they weren't impacted by deleting foo)
+	selectors = s.getNodeSelectors("bar", true)
+	s.RequireProtoListEqual(bar, selectors)
+	// get bar selectors (make sure they weren't impacted by deleting foo)
+	selectors = s.getNodeSelectors("bar", false)
+	s.RequireProtoListEqual(bar, selectors)
+}
+
+func (s *PluginSuite) TestListNodeSelectors() {
+	s.T().Run("no selectors exist", func(t *testing.T) {
+		req := &datastore.ListNodeSelectorsRequest{}
+		resp := s.listNodeSelectors(req)
+		s.Assert().Empty(resp.Selectors)
+	})
+
+	const numNonExpiredAttNodes = 3
+	const attestationDataType = "fake_nodeattestor"
+	nonExpiredAttNodes := make([]*common.AttestedNode, numNonExpiredAttNodes)
+	for i := 0; i < numNonExpiredAttNodes; i++ {
+		nonExpiredAttNodes[i] = &common.AttestedNode{
+			SpiffeId:            fmt.Sprintf("spiffe://example.org/non-expired-node-%d", i),
+			AttestationDataType: attestationDataType,
+			CertSerialNumber:    fmt.Sprintf("non-expired serial %d-1", i),
+			CertNotAfter:        time.Now().Add(time.Hour).Unix(),
+			NewCertSerialNumber: fmt.Sprintf("non-expired serial %d-2", i),
+			NewCertNotAfter:     time.Now().Add(2 * time.Hour).Unix(),
+		}
+	}
+
+	const numExpiredAttNodes = 2
+	expiredAttNodes := make([]*common.AttestedNode, numExpiredAttNodes)
+	for i := 0; i < numExpiredAttNodes; i++ {
+		expiredAttNodes[i] = &common.AttestedNode{
+			SpiffeId:            fmt.Sprintf("spiffe://example.org/expired-node-%d", i),
+			AttestationDataType: attestationDataType,
+			CertSerialNumber:    fmt.Sprintf("expired serial %d-1", i),
+			CertNotAfter:        time.Now().Add(-24 * time.Hour).Unix(),
+			NewCertSerialNumber: fmt.Sprintf("expired serial %d-2", i),
+			NewCertNotAfter:     time.Now().Add(-12 * time.Hour).Unix(),
+		}
+	}
+
+	allAttNodesToCreate := append(nonExpiredAttNodes, expiredAttNodes...)
+	selectorMap := make(map[string][]*common.Selector)
+	for i, n := range allAttNodesToCreate {
+		req := &datastore.CreateAttestedNodeRequest{
+			Node: n,
+		}
+
+		_, err := s.shim.CreateAttestedNode(ctx, req)
+		s.Require().NoError(err)
+
+		selectors := []*common.Selector{
+			{
+				Type:  "foo",
+				Value: strconv.Itoa(i),
+			},
+		}
+
+		s.setNodeSelectors(n.SpiffeId, selectors)
+		selectorMap[n.SpiffeId] = selectors
+	}
+
+	nonExpiredSelectorsMap := make(map[string][]*common.Selector, numNonExpiredAttNodes)
+	for i := 0; i < numNonExpiredAttNodes; i++ {
+		spiffeID := nonExpiredAttNodes[i].SpiffeId
+		nonExpiredSelectorsMap[spiffeID] = selectorMap[spiffeID]
+	}
+
+	s.T().Run("list all", func(t *testing.T) {
+		req := &datastore.ListNodeSelectorsRequest{}
+		resp := s.listNodeSelectors(req)
+		s.Require().Len(resp.Selectors, len(selectorMap))
+	})
+
+	s.T().Run("list unexpired", func(t *testing.T) {
+		req := &datastore.ListNodeSelectorsRequest{
+			ValidAt: &timestamppb.Timestamp{
+				Seconds: time.Now().Unix(),
+			},
+		}
+
+		resp := s.listNodeSelectors(req)
+		s.Assert().Len(resp.Selectors, len(nonExpiredSelectorsMap))
+		for _, n := range resp.Selectors {
+			expectedSelectors, ok := nonExpiredSelectorsMap[n.SpiffeId]
+			s.Assert().True(ok)
+			s.AssertProtoListEqual(expectedSelectors, n.Selectors)
+		}
+	})
+}
+
+func (s *PluginSuite) TestSetNodeSelectorsUnderLoad() {
+	selectors := []*common.Selector{
+		{Type: "TYPE", Value: "VALUE"},
+	}
+
+	const numWorkers = 20
+
+	resultCh := make(chan error, numWorkers)
+	nextID := int32(0)
+
+	// Create nodes for valid node selector IDs
+	node := &common.AttestedNode{
+		SpiffeId:            "foo",
+		AttestationDataType: "aws-tag",
+		CertSerialNumber:    "badcafe",
+		CertNotAfter:        time.Now().Add(time.Hour).Unix(),
+	}
+
+	for i := 0; i < numWorkers*11; i++ {
+		node.SpiffeId = fmt.Sprintf("ID%d", i)
+		_, err := s.shim.CreateAttestedNode(ctx, &datastore.CreateAttestedNodeRequest{Node: node})
+		s.Require().NoError(err)
+	}
+
+	for i := 0; i < numWorkers; i++ {
+		go func() {
+			id := fmt.Sprintf("ID%d", atomic.AddInt32(&nextID, 1))
+			for j := 0; j < 10; j++ {
+				_, err := s.shim.SetNodeSelectors(ctx, &datastore.SetNodeSelectorsRequest{
+					Selectors: &datastore.NodeSelectors{
+						SpiffeId:  id,
+						Selectors: selectors,
+					},
+				})
+				if err != nil {
+					resultCh <- err
+				}
+			}
+			resultCh <- nil
+		}()
+	}
+
+	for i := 0; i < numWorkers; i++ {
+		s.Require().NoError(<-resultCh)
+	}
 }

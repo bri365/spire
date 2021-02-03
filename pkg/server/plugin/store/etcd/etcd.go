@@ -4,6 +4,7 @@ package etcd
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"sync"
 	"time"
@@ -182,18 +183,23 @@ func (st *Plugin) Set(ctx context.Context, req *store.SetRequest) (*store.SetRes
 	// Operations to execute if all comparisons are true
 	ops := []clientv3.Op{}
 
+	// Collect transaction operations for logging
+	res := ""
 	for _, element := range req.Elements {
 		for _, kv := range element.Kvs {
 			// Add requested comparison, if requested; default is no comparison
 			if kv.Compare == pb.Compare_NOT_PRESENT {
 				// Create new key
 				cmps = append(cmps, clientv3.Compare(clientv3.Version(kv.Key), "=", 0))
+				res = fmt.Sprintf("%s C %s @ 0", res, kv.Key)
 			} else if kv.Compare == pb.Compare_PRESENT {
 				// Update existing key
 				cmps = append(cmps, clientv3.Compare(clientv3.Version(kv.Key), ">", 0))
+				res = fmt.Sprintf("%s C %s > 0", res, kv.Key)
 			} else if kv.Compare == pb.Compare_EQUALS {
 				// Update with transactional integrity from a previous read operation
 				cmps = append(cmps, clientv3.Compare(clientv3.Version(kv.Key), "=", kv.Version))
+				res = fmt.Sprintf("%s C %s @ %d", res, kv.Key, kv.Version)
 			}
 
 			// Add the operation
@@ -203,8 +209,10 @@ func (st *Plugin) Set(ctx context.Context, req *store.SetRequest) (*store.SetRes
 					opts = append(opts, clientv3.WithRange(kv.End))
 				}
 				ops = append(ops, clientv3.OpDelete(kv.Key, opts...))
+				res = fmt.Sprintf("%s DEL %s %s", res, kv.Key, kv.End)
 			} else if element.Operation == store.Operation_PUT {
 				ops = append(ops, clientv3.OpPut(kv.Key, string(kv.Value)))
+				res = fmt.Sprintf("%s PUT %s %v", res, kv.Key, kv.Value)
 			}
 		}
 	}
@@ -215,10 +223,12 @@ func (st *Plugin) Set(ctx context.Context, req *store.SetRequest) (*store.SetRes
 		Then(ops...).
 		Commit()
 	if err != nil {
-		return nil, err
+		// return nil, err
+		return nil, status.Error(codes.Unknown, fmt.Sprintf("%v %s", err, res))
 	}
 	if !t.Succeeded {
 		return nil, status.Error(codes.Aborted, "store-etcd: missing or incorrect version")
+		// return nil, status.Error(codes.Aborted, fmt.Sprintf("%s %v", res, t.Responses))
 	}
 
 	resp := &store.SetResponse{Revision: t.Header.Revision}
