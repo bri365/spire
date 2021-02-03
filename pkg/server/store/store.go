@@ -1,4 +1,4 @@
-// Package store implements a datastore shim
+// Package store implements a datastore shim with the proposed new store interface.
 //
 // Items are stored with a key string and the marshalled protobuf data as the value
 // Keys are formatted as <item key><delim><unique identifier>

@@ -1,4 +1,4 @@
-// Package store implements a datastore shim
+// Package store implements a datastore shim with the proposed new store interface.
 package store
 
 import (
