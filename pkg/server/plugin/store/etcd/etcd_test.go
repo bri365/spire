@@ -10,8 +10,10 @@ import (
 	common_log "github.com/spiffe/spire/pkg/common/log"
 	"github.com/spiffe/spire/pkg/common/telemetry"
 
+	"github.com/spiffe/spire/pkg/server/plugin/datastore"
 	"github.com/spiffe/spire/pkg/server/plugin/store"
 	ss "github.com/spiffe/spire/pkg/server/store"
+	"github.com/spiffe/spire/proto/spire/common"
 	spi "github.com/spiffe/spire/proto/spire/common/plugin"
 	"github.com/spiffe/spire/test/clock"
 	"github.com/spiffe/spire/test/spiretest"
@@ -49,6 +51,15 @@ type PluginSuite struct {
 	st         store.Plugin
 	shim       ss.Shim
 	etcdPlugin *Plugin
+}
+
+type ListRegistrationReq struct {
+	name               string
+	pagination         *datastore.Pagination
+	selectors          []*common.Selector
+	expectedList       []*common.RegistrationEntry
+	expectedPagination *datastore.Pagination
+	err                string
 }
 
 func TestPlugin(t *testing.T) {

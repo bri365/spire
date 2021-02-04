@@ -202,7 +202,7 @@ func (st *Plugin) Set(ctx context.Context, req *store.SetRequest) (*store.SetRes
 				res = fmt.Sprintf("%s C %s @ %d", res, kv.Key, kv.Version)
 			}
 
-			// Add the operation
+			// Add the operation (Operation_COMPARE has no operation)
 			if element.Operation == store.Operation_DELETE {
 				opts := []clientv3.OpOption{}
 				if kv.End != "" {

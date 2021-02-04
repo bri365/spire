@@ -52,10 +52,10 @@ func (s *Shim) CreateRegistrationEntry(ctx context.Context,
 	}
 
 	if req.Entry.EntryId != "" {
-		return nil, status.Error(codes.InvalidArgument, "store-etcd: invalid request: EntryId not empty")
+		return nil, status.Errorf(codes.InvalidArgument, "store-etcd: invalid request: EntryId not empty %v", req.Entry.EntryId)
 	}
 
-	req.Entry.EntryId, err = newRegistrationEntryID()
+	req.Entry.EntryId, err = s.newRegistrationEntryID()
 	if err != nil {
 		return nil, err
 	}
@@ -68,6 +68,9 @@ func (s *Shim) CreateRegistrationEntry(ctx context.Context,
 		// Return gRPC InvalidArgument error?
 		return nil, err
 	}
+
+	// Create a list of comparisons to check federated bundles if needed
+	cmp := []*store.KeyValue{}
 
 	// Create a list of keys to add, starting with the registered entry, ensuring it doesn't already exist
 	put := []*store.KeyValue{{Key: k, Value: v, Compare: store.Compare_NOT_PRESENT}}
@@ -87,6 +90,11 @@ func (s *Shim) CreateRegistrationEntry(ctx context.Context,
 
 	// Create index records for federation by bundle domain
 	for _, domain := range e.FederatesWith {
+		// Ensure bundle exists
+		// NOTE: trading off performance for better error reporting, we could identify the specific
+		// trust domain(s) missing by querying for them here instead of executing the comparison
+		// in the transaction as etcd does not identify which comparison(s) fail
+		cmp = append(cmp, &store.KeyValue{Key: bundleKey(domain), Compare: store.Compare_PRESENT})
 		put = append(put, &store.KeyValue{Key: entryFedByDomainKey(e.EntryId, domain)})
 	}
 
@@ -98,10 +106,21 @@ func (s *Shim) CreateRegistrationEntry(ctx context.Context,
 	// One put operation for this transaction
 	tx := []*store.SetRequestElement{{Operation: store.Operation_PUT, Kvs: put}}
 
+	// Add comparisons if present
+	if len(cmp) > 0 {
+		tx = append(tx, &store.SetRequestElement{Kvs: cmp, Operation: store.Operation_COMPARE})
+	}
+
 	_, err = s.Store.Set(ctx, &store.SetRequest{Elements: tx})
 	if err != nil {
 		// TODO get most accurate error possible
-		// st := status.Convert(err)
+		if status.Convert(err).Code() == codes.Aborted {
+			msg := fmt.Sprintf("entry already exists")
+			if len(cmp) > 0 {
+				msg = fmt.Sprintf("unable to find federated bundle or %s", msg)
+			}
+			return nil, status.Error(codes.Aborted, msg)
+		}
 		return nil, err
 	}
 
@@ -154,7 +173,7 @@ func (s *Shim) DeleteRegistrationEntry(ctx context.Context,
 		return nil, err
 	}
 
-	return &datastore.DeleteRegistrationEntryResponse{Entry: &common.RegistrationEntry{}}, nil
+	return &datastore.DeleteRegistrationEntryResponse{Entry: e}, nil
 }
 
 // FetchRegistrationEntry fetches an existing registration by entry ID
@@ -217,6 +236,7 @@ func (s *Shim) ListRegistrationEntries(ctx context.Context,
 		return nil, err
 	}
 	rev := res.Revision
+	s.log.Info(fmt.Sprintf("req: %v", req))
 
 	// A collection of IDs for the filtered results - maps make intersection easier
 	// NOTE: for performance reasons, organize the following filters with smallest expected results first
@@ -265,12 +285,14 @@ func (s *Shim) ListRegistrationEntries(ctx context.Context,
 	}
 
 	if req.BySelectors != nil {
+		s.log.Info(fmt.Sprintf("by selectors: %v", req.BySelectors))
 		subset := map[string]bool{}
 		for _, sel := range req.BySelectors.Selectors {
 			ids, err := s.entrySelMap(ctx, rev, sel)
 			if err != nil {
 				return nil, err
 			}
+			s.log.Info(fmt.Sprintf("ids: %v", ids))
 			if req.BySelectors.Match == datastore.BySelectors_MATCH_EXACT {
 				// The given selectors are the complete set for an entry to match
 				idMaps = append(idMaps, ids)
@@ -284,11 +306,14 @@ func (s *Shim) ListRegistrationEntries(ctx context.Context,
 			} else {
 				return nil, fmt.Errorf("unhandled match behavior %q", req.BySelectors.Match)
 			}
+			s.log.Info(fmt.Sprintf("subset: %v", subset))
 		}
 		if len(subset) > 0 {
 			idMaps = append(idMaps, subset)
 		}
 	}
+
+	s.log.Info(fmt.Sprintf("idMaps: %v", idMaps))
 
 	count := len(idMaps)
 	if count > 1 {
@@ -305,7 +330,7 @@ func (s *Shim) ListRegistrationEntries(ctx context.Context,
 		}
 	}
 
-	key := nodeKey("")
+	key := entryKey("")
 	var limit int64
 
 	p := req.Pagination
@@ -365,6 +390,7 @@ func (s *Shim) ListRegistrationEntries(ctx context.Context,
 			i++
 		}
 	} else {
+		s.log.Info(fmt.Sprintf("no filters key: %s, end: %s, limit: %d, rev: %d", key, allEntries, limit, rev))
 		// No filters, get all registered entries up to limit
 		res, err := s.Store.Get(ctx, &store.GetRequest{Key: key, End: allEntries, Limit: limit, Revision: rev})
 		if err != nil {
@@ -645,7 +671,16 @@ func validateRegistrationEntryForUpdate(entry *common.RegistrationEntry, mask *c
 	return nil
 }
 
-func newRegistrationEntryID() (string, error) {
+func (s *Shim) newRegistrationEntryID() (string, error) {
+	// testing
+	// Get the current store revision for use as incremental EntryIds for testing.
+	res, err := s.Store.Get(context.TODO(), &store.GetRequest{Key: entryPrefix, End: allEntries, Limit: 1})
+	if err != nil {
+		return "", err
+	}
+	rev := res.Revision
+	return fmt.Sprintf("%d", rev), nil
+	// testing
 	u, err := uuid.NewV4()
 	if err != nil {
 		return "", err
