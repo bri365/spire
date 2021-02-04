@@ -904,63 +904,63 @@ func (s *PluginSuite) TestListSelectorEntries() {
 	}
 }
 
-// func (s *PluginSuite) TestListEntriesBySelectorSubset() {
-// 	allEntries := make([]*common.RegistrationEntry, 0)
-// 	s.getTestDataFromJSONFile(filepath.Join("testdata", "entries.json"), &allEntries)
-// 	tests := []struct {
-// 		name                string
-// 		registrationEntries []*common.RegistrationEntry
-// 		selectors           []*common.Selector
-// 		expectedList        []*common.RegistrationEntry
-// 	}{
-// 		{
-// 			name:                "test1",
-// 			registrationEntries: allEntries,
-// 			selectors: []*common.Selector{
-// 				{Type: "a", Value: "1"},
-// 				{Type: "b", Value: "2"},
-// 				{Type: "c", Value: "3"},
-// 			},
-// 			expectedList: []*common.RegistrationEntry{
-// 				allEntries[0],
-// 				allEntries[1],
-// 				allEntries[2],
-// 			},
-// 		},
-// 		{
-// 			name:                "test2",
-// 			registrationEntries: allEntries,
-// 			selectors: []*common.Selector{
-// 				{Type: "d", Value: "4"},
-// 			},
-// 			expectedList: nil,
-// 		},
-// 	}
-// 	for _, test := range tests {
-// 		test := test
-// 		s.T().Run(test.name, func(t *testing.T) {
-// 			s.cleanStore()
-// 			for _, entry := range test.registrationEntries {
-// 				entry.EntryId = ""
-// 				r, err := s.shim.CreateRegistrationEntry(ctx, &datastore.CreateRegistrationEntryRequest{Entry: entry})
-// 				require.NoError(t, err)
-// 				require.NotNil(t, r)
-// 				require.NotNil(t, r.Entry)
-// 				entry.EntryId = r.Entry.EntryId
-// 			}
-// 			result, err := s.shim.ListRegistrationEntries(ctx, &datastore.ListRegistrationEntriesRequest{
-// 				BySelectors: &datastore.BySelectors{
-// 					Selectors: test.selectors,
-// 					Match:     datastore.BySelectors_MATCH_SUBSET,
-// 				},
-// 			})
-// 			require.NoError(t, err)
-// 			util.SortRegistrationEntries(test.expectedList)
-// 			util.SortRegistrationEntries(result.Entries)
-// 			s.RequireProtoListEqual(test.expectedList, result.Entries)
-// 		})
-// 	}
-// }
+func (s *PluginSuite) TestListEntriesBySelectorSubset() {
+	allEntries := make([]*common.RegistrationEntry, 0)
+	s.getTestDataFromJSONFile(filepath.Join("testdata", "entries.json"), &allEntries)
+	tests := []struct {
+		name                string
+		registrationEntries []*common.RegistrationEntry
+		selectors           []*common.Selector
+		expectedList        []*common.RegistrationEntry
+	}{
+		{
+			name:                "test1",
+			registrationEntries: allEntries,
+			selectors: []*common.Selector{
+				{Type: "a", Value: "1"},
+				{Type: "b", Value: "2"},
+				{Type: "c", Value: "3"},
+			},
+			expectedList: []*common.RegistrationEntry{
+				allEntries[0],
+				allEntries[1],
+				allEntries[2],
+			},
+		},
+		{
+			name:                "test2",
+			registrationEntries: allEntries,
+			selectors: []*common.Selector{
+				{Type: "d", Value: "4"},
+			},
+			expectedList: nil,
+		},
+	}
+	for _, test := range tests {
+		test := test
+		s.T().Run(test.name, func(t *testing.T) {
+			s.cleanStore()
+			for _, entry := range test.registrationEntries {
+				entry.EntryId = ""
+				r, err := s.shim.CreateRegistrationEntry(ctx, &datastore.CreateRegistrationEntryRequest{Entry: entry})
+				require.NoError(t, err)
+				require.NotNil(t, r)
+				require.NotNil(t, r.Entry)
+				entry.EntryId = r.Entry.EntryId
+			}
+			result, err := s.shim.ListRegistrationEntries(ctx, &datastore.ListRegistrationEntriesRequest{
+				BySelectors: &datastore.BySelectors{
+					Selectors: test.selectors,
+					Match:     datastore.BySelectors_MATCH_SUBSET,
+				},
+			})
+			require.NoError(t, err)
+			util.SortRegistrationEntries(test.expectedList)
+			util.SortRegistrationEntries(result.Entries)
+			s.RequireProtoListEqual(test.expectedList, result.Entries)
+		})
+	}
+}
 
 func (s *PluginSuite) TestRegistrationEntriesFederatesWithAgainstMissingBundle() {
 	// cannot federate with a trust bundle that does not exist

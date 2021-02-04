@@ -782,7 +782,6 @@ func (s *Shim) nodeSelMap(ctx context.Context, rev int64, sel *common.Selector) 
 
 // selectorMatch verifies the node selectors properly match the requested selectors.
 //   - Exact match is true if both lists are identical
-//   - Subset match is true if all requested selectors are present in node
 //   - Subset match is true if all node selectors are present in requested selectors
 func (s *Shim) nodeSelectorMatch(node *common.AttestedNode, req *datastore.BySelectors) bool {
 	nodeSelectors := selectorMap(node.Selectors)
@@ -793,34 +792,18 @@ func (s *Shim) nodeSelectorMatch(node *common.AttestedNode, req *datastore.BySel
 			return true
 		}
 	} else if req.Match == datastore.BySelectors_MATCH_SUBSET {
-		// Do all request selectors exist in node selectors?
-		reqMatch := true
-		for reqType, reqValue := range reqSelectors {
-			nodeValue, ok := nodeSelectors[reqType]
-			if ok {
-				if nodeValue != reqValue {
-					reqMatch = false
-				}
-			} else {
-				reqMatch = false
-			}
-		}
 		// Do all node selectors exist in request selectors?
-		nodeMatch := true
 		for nodeType, nodeValue := range nodeSelectors {
 			reqValue, ok := reqSelectors[nodeType]
 			if ok {
 				if reqValue != nodeValue {
-					nodeMatch = false
+					return false
 				}
 			} else {
-				nodeMatch = false
+				return false
 			}
 		}
-		// Either satisfies "match subset"
-		if reqMatch || nodeMatch {
-			return true
-		}
+		return true
 	} else {
 		s.log.Warn(fmt.Sprintf("Unknown match %v", req.Match))
 	}

@@ -903,7 +903,6 @@ func (s *Shim) entrySelMap(ctx context.Context, rev int64, sel *common.Selector)
 
 // selectorMatch verifies the entry selectors properly match the requested selectors.
 //   - Exact match is true if both lists are identical
-//   - Subset match is true if all requested selectors are present in the registered entry
 //   - Subset match is true if all registered entry selectors are present in requested selectors
 func (s *Shim) entrySelectorMatch(entry *common.RegistrationEntry, req *datastore.BySelectors) bool {
 	entrySelectors := selectorMap(entry.Selectors)
@@ -914,34 +913,18 @@ func (s *Shim) entrySelectorMatch(entry *common.RegistrationEntry, req *datastor
 			return true
 		}
 	} else if req.Match == datastore.BySelectors_MATCH_SUBSET {
-		// Do all request selectors exist in entry selectors?
-		reqMatch := true
-		for reqType, reqValue := range reqSelectors {
-			entryValue, ok := entrySelectors[reqType]
-			if ok {
-				if entryValue != reqValue {
-					reqMatch = false
-				}
-			} else {
-				reqMatch = false
-			}
-		}
 		// Do all entry selectors exist in request selectors?
-		entryMatch := true
 		for entryType, entryValue := range entrySelectors {
 			reqValue, ok := reqSelectors[entryType]
 			if ok {
 				if reqValue != entryValue {
-					entryMatch = false
+					return false
 				}
 			} else {
-				entryMatch = false
+				return false
 			}
 		}
-		// Either satisfies "match subset"
-		if reqMatch || entryMatch {
-			return true
-		}
+		return true
 	} else {
 		s.log.Warn(fmt.Sprintf("Unknown match %v", req.Match))
 	}
