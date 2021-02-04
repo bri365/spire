@@ -14,7 +14,6 @@ import (
 	"github.com/spiffe/spire/pkg/server/plugin/datastore"
 	"github.com/spiffe/spire/pkg/server/plugin/store"
 	"github.com/spiffe/spire/proto/spire/common"
-	"github.com/zeebo/errs"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -82,6 +81,8 @@ func (s *Shim) CreateAttestedNode(ctx context.Context,
 
 	_, err = s.Store.Set(ctx, &store.SetRequest{Elements: tx})
 	if err != nil {
+		// TODO get most accurate error possible
+		// st := status.Convert(err)
 		return nil, err
 	}
 
@@ -194,6 +195,7 @@ func (s *Shim) ListAttestedNodes(ctx context.Context,
 	}
 	rev := res.Revision
 
+	// A collection of IDs for the filtered results - maps make intersection easier
 	idMaps := []map[string]bool{}
 
 	if req.ByAttestationType != "" {
@@ -238,7 +240,7 @@ func (s *Shim) ListAttestedNodes(ctx context.Context,
 					subset[id] = true
 				}
 			} else {
-				return nil, errs.New("unhandled match behavior %q", req.BySelectorMatch.Match)
+				return nil, fmt.Errorf("unhandled match behavior %q", req.BySelectorMatch.Match)
 			}
 		}
 		if len(subset) > 0 {
@@ -308,7 +310,8 @@ func (s *Shim) ListAttestedNodes(ctx context.Context,
 					return nil, err
 				}
 				if req.BySelectorMatch != nil {
-					if !s.selectorMatch(n, req.BySelectorMatch) {
+					if !s.nodeSelectorMatch(n, req.BySelectorMatch) {
+						// Failed selector match - skip this item
 						continue
 					}
 				} else if req.FetchSelectors == false {
@@ -369,7 +372,7 @@ func (s *Shim) UpdateAttestedNode(ctx context.Context,
 		return s.DataStore.UpdateAttestedNode(ctx, req)
 	}
 
-	// get current attested node and version for transactional integrity
+	// Get current attested node and version for transactional integrity
 	fn, ver, err := s.fetchNode(ctx, &datastore.FetchAttestedNodeRequest{SpiffeId: req.SpiffeId})
 	if err != nil {
 		return nil, err
@@ -389,49 +392,42 @@ func (s *Shim) UpdateAttestedNode(ctx context.Context,
 		req.InputMask = protoutil.AllTrueCommonAgentMask
 	}
 
-	if req.InputMask.CertNotAfter {
-		changed = true
-		// Delete existing index key if different from new one
-		oldKey := nodeExpKey(n.SpiffeId, n.CertNotAfter)
-		newKey := nodeExpKey(n.SpiffeId, req.CertNotAfter)
-		if newKey != oldKey {
-			del = append(del, &store.KeyValue{Key: oldKey})
-		}
-
-		n.CertNotAfter = req.CertNotAfter
-
+	if req.InputMask.CertNotAfter && n.CertNotAfter != req.CertNotAfter {
 		// Index record for expiry contains node selectors as content to simplify selector listing
 		sel := &datastore.NodeSelectors{SpiffeId: n.SpiffeId, Selectors: n.Selectors}
 		v, err := proto.Marshal(sel)
 		if err != nil {
 			return nil, err
 		}
-		put = append(put, &store.KeyValue{Key: newKey, Value: v})
+
+		del = append(del, &store.KeyValue{Key: nodeExpKey(n.SpiffeId, n.CertNotAfter)})
+		put = append(put, &store.KeyValue{Key: nodeExpKey(n.SpiffeId, req.CertNotAfter), Value: v})
+		n.CertNotAfter = req.CertNotAfter
+		changed = true
 	}
 
 	if req.InputMask.CertSerialNumber {
-		changed = true
 		// Delete existing index key if different from new one
 		oldKey := nodeBanKey(n.SpiffeId, n.CertSerialNumber)
 		newKey := nodeBanKey(n.SpiffeId, req.CertSerialNumber)
 		if newKey != oldKey {
 			del = append(del, &store.KeyValue{Key: oldKey})
+			put = append(put, &store.KeyValue{Key: newKey})
 		}
 
 		n.CertSerialNumber = req.CertSerialNumber
-
-		put = append(put, &store.KeyValue{Key: newKey})
+		changed = true
 	}
 
 	// New certificate fields are not indexed
 	if req.InputMask.NewCertNotAfter {
-		changed = true
 		n.NewCertNotAfter = req.NewCertNotAfter
+		changed = true
 	}
 
 	if req.InputMask.NewCertSerialNumber {
-		changed = true
 		n.NewCertSerialNumber = req.NewCertSerialNumber
+		changed = true
 	}
 
 	if !changed {
@@ -445,7 +441,7 @@ func (s *Shim) UpdateAttestedNode(ctx context.Context,
 		return nil, err
 	}
 
-	// Add put record for updated node, ensuring version has not changed
+	// Add put record for updated node, ensuring version has not changed since fetching above
 	put = append(put, &store.KeyValue{Key: k, Value: v, Version: ver, Compare: store.Compare_EQUALS})
 
 	// Transaction elements
@@ -545,7 +541,7 @@ func (s *Shim) SetNodeSelectors(ctx context.Context,
 	// Build a list of existing index keys to delete any unused ones
 	delKeys := map[string]bool{}
 	if n.Selectors != nil {
-		for _, sel := range fn.Node.Selectors {
+		for _, sel := range n.Selectors {
 			delKeys[nodeSelKey(n.SpiffeId, sel)] = true
 		}
 	}
@@ -583,7 +579,7 @@ func (s *Shim) SetNodeSelectors(ctx context.Context,
 	tx := []*store.SetRequestElement{}
 
 	if len(delKeys) > 0 {
-		// Delete existing unused index keys
+		// Delete remaining unused index keys
 		del := []*store.KeyValue{}
 		for k := range delKeys {
 			del = append(del, &store.KeyValue{Key: k})
@@ -626,7 +622,7 @@ func nodeAdtID(key string) (string, error) {
 	return items[3], nil
 }
 
-// nodeAdtList returns a map of attested node ids by attestation data type.
+// nodeAdtMap returns a map of attested node ids by attestation data type.
 // A specific store revision may be supplied for transactional consistency; 0 = current revision
 // Use of a map facilitates easier intersection with other filters
 func (s *Shim) nodeAdtMap(ctx context.Context, rev int64, adt string) (map[string]bool, error) {
@@ -669,7 +665,7 @@ func nodeBanID(key string) (string, error) {
 	return items[3], nil
 }
 
-// nodeBanList returns a map of attested node ids that are either banned or not.
+// nodeBanMap returns a map of attested node ids that are either banned or not.
 // A specific store revision may be supplied for transactional consistency; 0 = current revision
 // Use of a map facilitates easier intersection with other filters
 func (s *Shim) nodeBanMap(ctx context.Context, rev int64, ban bool) (map[string]bool, error) {
@@ -713,7 +709,7 @@ func nodeExpID(key string) (string, error) {
 	return items[3], nil
 }
 
-// nodeExpList returns a map of attested node ids expiring before or after the given expiry.
+// nodeExpMap returns a map of attested node ids expiring before or after the given expiry.
 // A specific store revision may be supplied for transactional consistency; 0 = current revision
 // Use of a map facilitates easier intersection with other filters
 func (s *Shim) nodeExpMap(ctx context.Context, rev, exp int64, after bool) (map[string]bool, error) {
@@ -759,7 +755,7 @@ func nodeSelID(key string) (string, error) {
 	return items[4], nil
 }
 
-// nodeSelList returns a map of attested node ids by selector match.
+// nodeSelMap returns a map of attested node ids by selector match.
 // A specific store revision may be supplied for transactional consistency; 0 = current revision
 // Use of a map facilitates easier intersection with other filters
 func (s *Shim) nodeSelMap(ctx context.Context, rev int64, sel *common.Selector) (map[string]bool, error) {
@@ -788,7 +784,7 @@ func (s *Shim) nodeSelMap(ctx context.Context, rev int64, sel *common.Selector) 
 //   - Exact match is true if both lists are identical
 //   - Subset match is true if all requested selectors are present in node
 //   - Subset match is true if all node selectors are present in requested selectors
-func (s *Shim) selectorMatch(node *common.AttestedNode, req *datastore.BySelectors) bool {
+func (s *Shim) nodeSelectorMatch(node *common.AttestedNode, req *datastore.BySelectors) bool {
 	nodeSelectors := selectorMap(node.Selectors)
 	reqSelectors := selectorMap(req.Selectors)
 	if req.Match == datastore.BySelectors_MATCH_EXACT {

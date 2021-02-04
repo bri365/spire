@@ -52,6 +52,7 @@ const (
 	CNA = "CNA" // CertNotAfter
 	BAN = "BAN" // Banned (CertSerialNumber empty or not)
 	EXP = "EXP" // Expiry
+	FED = "FED" // Federation
 	PID = "PID" // ParentId
 	SID = "SID" // SpiffeId
 	TVI = "TVI" // Type-Value-ID

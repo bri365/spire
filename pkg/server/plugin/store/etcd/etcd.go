@@ -264,11 +264,6 @@ func (st *Plugin) openConnection(cfg *configuration, isReadOnly bool) error {
 		return err
 	}
 
-	// err = st.sanity()
-	// if err != nil {
-	// 	return err
-	// }
-
 	return nil
 }
 
