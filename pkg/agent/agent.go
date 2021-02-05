@@ -27,8 +27,6 @@ import (
 	"github.com/spiffe/spire/pkg/common/telemetry"
 	"github.com/spiffe/spire/pkg/common/uptime"
 	"github.com/spiffe/spire/pkg/common/util"
-	"github.com/spiffe/spire/proto/spire/api/server/agent/v1"
-	"github.com/spiffe/spire/proto/spire/api/server/bundle/v1"
 	_ "golang.org/x/net/trace" // registers handlers on the DefaultServeMux
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -69,6 +67,7 @@ func (a *Agent) Run(ctx context.Context) error {
 	})
 
 	telemetry.EmitVersion(metrics)
+	uptime.ReportMetrics(ctx, metrics)
 
 	cat, err := catalog.Load(ctx, catalog.Config{
 		Log: a.c.Log.WithField(telemetry.SubsystemName, telemetry.Catalog),
@@ -108,7 +107,7 @@ func (a *Agent) Run(ctx context.Context) error {
 		manager.Run,
 		endpoints.ListenAndServe,
 		metrics.ListenAndServe,
-		healthChecks.ListenAndServe,
+		util.SerialRun(a.waitForTestDial, healthChecks.ListenAndServe),
 	}
 
 	if a.c.AdminBindAddress != nil {
@@ -184,18 +183,16 @@ func (a *Agent) setupProfiling(ctx context.Context) (stop func()) {
 
 func (a *Agent) attest(ctx context.Context, cat catalog.Catalog, metrics telemetry.Metrics) (*node_attestor.AttestationResult, error) {
 	config := node_attestor.Config{
-		Catalog:               cat,
-		Metrics:               metrics,
-		JoinToken:             a.c.JoinToken,
-		TrustDomain:           a.c.TrustDomain,
-		TrustBundle:           a.c.TrustBundle,
-		InsecureBootstrap:     a.c.InsecureBootstrap,
-		BundleCachePath:       a.bundleCachePath(),
-		SVIDCachePath:         a.agentSVIDPath(),
-		Log:                   a.c.Log.WithField(telemetry.SubsystemName, telemetry.Attestor),
-		ServerAddress:         a.c.ServerAddress,
-		CreateNewAgentClient:  agent.NewAgentClient,
-		CreateNewBundleClient: bundle.NewBundleClient,
+		Catalog:           cat,
+		Metrics:           metrics,
+		JoinToken:         a.c.JoinToken,
+		TrustDomain:       a.c.TrustDomain,
+		TrustBundle:       a.c.TrustBundle,
+		InsecureBootstrap: a.c.InsecureBootstrap,
+		BundleCachePath:   a.bundleCachePath(),
+		SVIDCachePath:     a.agentSVIDPath(),
+		Log:               a.c.Log.WithField(telemetry.SubsystemName, telemetry.Attestor),
+		ServerAddress:     a.c.ServerAddress,
 	}
 	return node_attestor.New(&config).Attest(ctx)
 }
@@ -260,6 +257,14 @@ func (a *Agent) bundleCachePath() string {
 
 func (a *Agent) agentSVIDPath() string {
 	return path.Join(a.c.DataDir, "agent_svid.der")
+}
+
+// waitForTestDial calls health.WaitForTestDial to wait for a connection to the
+// SPIRE Agent API socket. This function always returns nil, even if
+// health.WaitForTestDial exited due to a timeout.
+func (a *Agent) waitForTestDial(ctx context.Context) error {
+	health.WaitForTestDial(ctx, a.c.BindAddress)
+	return nil
 }
 
 // Status is used as a top-level health check for the Agent.

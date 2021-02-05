@@ -159,7 +159,6 @@ serviceprotos := \
 	proto/spire/agent/keymanager/keymanager.proto \
 	proto/spire/agent/nodeattestor/nodeattestor.proto \
 	proto/spire/agent/workloadattestor/workloadattestor.proto \
-	proto/spire/api/node/node.proto \
 	proto/spire/api/registration/registration.proto \
 	proto/spire/common/hostservices/metricsservice.proto \
 	proto/spire/common/plugin/plugin.proto \

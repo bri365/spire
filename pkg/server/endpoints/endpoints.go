@@ -28,7 +28,6 @@ import (
 	"github.com/spiffe/spire/pkg/server/plugin/datastore"
 	datastore_pb "github.com/spiffe/spire/pkg/server/plugin/datastore"
 	"github.com/spiffe/spire/pkg/server/svid"
-	node_pb "github.com/spiffe/spire/proto/spire/api/node"
 	registration_pb "github.com/spiffe/spire/proto/spire/api/registration"
 	agentv1_pb "github.com/spiffe/spire/proto/spire/api/server/agent/v1"
 	bundlev1_pb "github.com/spiffe/spire/proto/spire/api/server/bundle/v1"
@@ -69,7 +68,6 @@ type Endpoints struct {
 
 type OldAPIServers struct {
 	RegistrationServer registration_pb.RegistrationServer
-	NodeServer         node_pb.NodeServer
 }
 
 type APIServers struct {
@@ -89,12 +87,13 @@ type RateLimitConfig struct {
 
 // New creates new endpoints struct
 func New(ctx context.Context, c Config) (*Endpoints, error) {
-	oldAPIServers, err := c.makeOldAPIServers()
-	if err != nil {
-		return nil, err
+	if err := os.MkdirAll(c.UDSAddr.String(), 0750); err != nil {
+		return nil, fmt.Errorf("unable to create socket directory: %w", err)
 	}
 
-	buildCacheFn := func(ctx context.Context) (entrycache.Cache, error) {
+	oldAPIServers := c.makeOldAPIServers()
+
+	buildCacheFn := func(ctx context.Context) (_ entrycache.Cache, err error) {
 		call := telemetry.StartCall(c.Metrics, telemetry.Entry, telemetry.Cache, telemetry.Reload)
 		defer call.Done(&err)
 		return entrycache.BuildFromDataStore(ctx, c.Catalog.GetDataStore())
@@ -134,7 +133,6 @@ func (e *Endpoints) ListenAndServe(ctx context.Context) error {
 	udsServer := e.createUDSServer(unaryInterceptor, streamInterceptor)
 
 	// Old APIs
-	node_pb.RegisterNodeServer(tcpServer, e.OldAPIServers.NodeServer)
 	registration_pb.RegisterRegistrationServer(tcpServer, e.OldAPIServers.RegistrationServer)
 	registration_pb.RegisterRegistrationServer(udsServer, e.OldAPIServers.RegistrationServer)
 
@@ -264,10 +262,8 @@ func (e *Endpoints) getTLSConfig(ctx context.Context) func(*tls.ClientHelloInfo)
 		}
 
 		return &tls.Config{
-			// When bootstrapping, the agent does not yet have
-			// an SVID. In order to include the bootstrap endpoint
-			// in the same server as the rest of the Node API,
-			// request but don't require a client certificate
+			// Not all server APIs required a client certificate. Though if one
+			// is presented, verify it.
 			ClientAuth: tls.VerifyClientCertIfGiven,
 
 			Certificates: certs,

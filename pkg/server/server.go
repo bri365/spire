@@ -86,6 +86,7 @@ func (s *Server) run(ctx context.Context) (err error) {
 	})
 
 	telemetry.EmitVersion(metrics)
+	uptime.ReportMetrics(ctx, metrics)
 
 	// Create the identity provider host service. It will not be functional
 	// until the call to SetDeps() below. There is some tricky initialization
@@ -171,7 +172,7 @@ func (s *Server) run(ctx context.Context) (err error) {
 		metrics.ListenAndServe,
 		bundleManager.Run,
 		registrationManager.Run,
-		healthChecks.ListenAndServe,
+		util.SerialRun(s.waitForTestDial, healthChecks.ListenAndServe),
 	)
 	if err == context.Canceled {
 		err = nil
@@ -304,19 +305,18 @@ func (s *Server) newSVIDRotator(ctx context.Context, serverCA ca.ServerCA, metri
 
 func (s *Server) newEndpointsServer(ctx context.Context, catalog catalog.Catalog, svidObserver svid.Observer, serverCA ca.ServerCA, metrics telemetry.Metrics, caManager *ca.Manager) (endpoints.Server, error) {
 	config := endpoints.Config{
-		TCPAddr:                     s.config.BindAddress,
-		UDSAddr:                     s.config.BindUDSAddress,
-		SVIDObserver:                svidObserver,
-		TrustDomain:                 s.config.TrustDomain,
-		Catalog:                     catalog,
-		ServerCA:                    serverCA,
-		Log:                         s.config.Log.WithField(telemetry.SubsystemName, telemetry.Endpoints),
-		Metrics:                     metrics,
-		Manager:                     caManager,
-		AllowAgentlessNodeAttestors: s.config.Experimental.AllowAgentlessNodeAttestors,
-		RateLimit:                   s.config.RateLimit,
-		Uptime:                      uptime.Uptime,
-		Clock:                       clock.New(),
+		TCPAddr:      s.config.BindAddress,
+		UDSAddr:      s.config.BindUDSAddress,
+		SVIDObserver: svidObserver,
+		TrustDomain:  s.config.TrustDomain,
+		Catalog:      catalog,
+		ServerCA:     serverCA,
+		Log:          s.config.Log.WithField(telemetry.SubsystemName, telemetry.Endpoints),
+		Metrics:      metrics,
+		Manager:      caManager,
+		RateLimit:    s.config.RateLimit,
+		Uptime:       uptime.Uptime,
+		Clock:        clock.New(),
 	}
 	if s.config.Federation.BundleEndpoint != nil {
 		config.BundleEndpoint.Address = s.config.Federation.BundleEndpoint.Address
@@ -381,6 +381,14 @@ func (s *Server) validateTrustDomain(ctx context.Context, ds datastore.DataStore
 			s.config.Log.Warn(msg)
 		}
 	}
+	return nil
+}
+
+// waitForTestDial calls health.WaitForTestDial to wait for a connection to the
+// SPIRE Server API socket. This function always returns nil, even if
+// health.WaitForTestDial exited due to a timeout.
+func (s *Server) waitForTestDial(ctx context.Context) error {
+	health.WaitForTestDial(ctx, s.config.BindUDSAddress)
 	return nil
 }
 
