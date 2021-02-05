@@ -66,16 +66,19 @@ var (
 	delend = string(delim[0] + 1)
 
 	// Key creation and comparison values
-	bundlePrefix  = fmt.Sprintf("%s%s", bundleKeyID, delim)
-	entryPrefix   = fmt.Sprintf("%s%s", entryKeyID, delim)
-	nodePrefix    = fmt.Sprintf("%s%s", nodeKeyID, delim)
+	bundlePrefix = fmt.Sprintf("%s%s", bundleKeyID, delim)
+	entryPrefix  = fmt.Sprintf("%s%s", entryKeyID, delim)
+	nodePrefix   = fmt.Sprintf("%s%s", nodeKeyID, delim)
+	selPrefix    = fmt.Sprintf("%s%s", selKeyID, delim)
+	tokenPrefix  = fmt.Sprintf("%s%s", tokenKeyID, delim)
+
+	allBundles   = fmt.Sprintf("%s%s", bundleKeyID, delend)
+	allEntries   = fmt.Sprintf("%s%s", entryKeyID, delend)
+	allNodes     = fmt.Sprintf("%s%s", nodeKeyID, delend)
+	allSelectors = fmt.Sprintf("%s%s", selKeyID, delend)
+
 	nodeExpPrefix = fmt.Sprintf("%s%s%s%s", indexKeyID, nodePrefix, EXP, delim)
 	nodeExpAll    = fmt.Sprintf("%s%s%s%s", indexKeyID, nodePrefix, EXP, delend)
-	selPrefix     = fmt.Sprintf("%s%s", selKeyID, delim)
-	allBundles    = fmt.Sprintf("%s%s", bundleKeyID, delend)
-	allEntries    = fmt.Sprintf("%s%s", entryKeyID, delend)
-	allNodes      = fmt.Sprintf("%s%s", nodeKeyID, delend)
-	allSelectors  = fmt.Sprintf("%s%s", selKeyID, delend)
 )
 
 // New returns an initialized storage shim.

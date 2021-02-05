@@ -3,12 +3,15 @@ package etcd
 import (
 	"context"
 	"crypto/x509"
+	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/spiffe/go-spiffe/v2/spiffeid"
 	common_log "github.com/spiffe/spire/pkg/common/log"
 	"github.com/spiffe/spire/pkg/common/telemetry"
+	"github.com/stretchr/testify/require"
 
 	"github.com/spiffe/spire/pkg/server/plugin/datastore"
 	"github.com/spiffe/spire/pkg/server/plugin/store"
@@ -149,4 +152,29 @@ func (s *PluginSuite) newPlugin() store.Plugin {
 	s.Require().NoError(err)
 
 	return st
+}
+
+func (s *PluginSuite) TestGetPluginInfo() {
+	resp, err := s.st.GetPluginInfo(ctx, &spi.GetPluginInfoRequest{})
+	s.Require().NoError(err)
+	s.Require().NotNil(resp)
+}
+
+func (s *PluginSuite) TestRace() {
+	next := int64(0)
+	exp := time.Now().Add(time.Hour).Unix()
+
+	testutil.RaceTest(s.T(), func(t *testing.T) {
+		node := &common.AttestedNode{
+			SpiffeId:            fmt.Sprintf("foo%d", atomic.AddInt64(&next, 1)),
+			AttestationDataType: "aws-tag",
+			CertSerialNumber:    "badcafe",
+			CertNotAfter:        exp,
+		}
+
+		_, err := s.shim.CreateAttestedNode(ctx, &datastore.CreateAttestedNodeRequest{Node: node})
+		require.NoError(t, err)
+		_, err = s.shim.FetchAttestedNode(ctx, &datastore.FetchAttestedNodeRequest{SpiffeId: node.SpiffeId})
+		require.NoError(t, err)
+	})
 }

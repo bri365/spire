@@ -665,15 +665,18 @@ func validateRegistrationEntryForUpdate(entry *common.RegistrationEntry, mask *c
 }
 
 func (s *Shim) newRegistrationEntryID() (string, error) {
-	// testing
+	/////////////////////////////////////////////
+	//     testing     testing     testing     //
 	// Get the current store revision for use as incremental EntryIds for testing.
+	//
 	res, err := s.Store.Get(context.TODO(), &store.GetRequest{Key: entryPrefix, End: allEntries, Limit: 1})
 	if err != nil {
 		return "", err
 	}
 	rev := res.Revision
 	return fmt.Sprintf("%d", rev), nil
-	// testing
+	//     testing     testing     testing     //
+	/////////////////////////////////////////////
 	u, err := uuid.NewV4()
 	if err != nil {
 		return "", err
