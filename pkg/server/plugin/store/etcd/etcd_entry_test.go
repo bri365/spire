@@ -983,64 +983,64 @@ func (s *PluginSuite) TestRegistrationEntriesFederatesWithSuccess() {
 	s.RequireProtoEqual(expected, actual)
 }
 
-// func (s *PluginSuite) TestDeleteBundleRestrictedByRegistrationEntries() {
-// 	// create the bundle and associated entry
-// 	s.createBundle("spiffe://otherdomain.org")
-// 	s.createRegistrationEntry(makeFederatedRegistrationEntry())
+func (s *PluginSuite) TestDeleteBundleRestrictedByRegistrationEntries() {
+	// create the bundle and associated entry
+	s.createBundle("spiffe://otherdomain.org")
+	s.createRegistrationEntry(makeFederatedRegistrationEntry())
 
-// 	// delete the bundle in RESTRICTED mode
-// 	_, err := s.shim.DeleteBundle(context.Background(), &datastore.DeleteBundleRequest{
-// 		TrustDomainId: "spiffe://otherdomain.org",
-// 	})
-// 	s.RequireErrorContains(err, "datastore-sql: cannot delete bundle; federated with 1 registration entries")
-// }
+	// delete the bundle in RESTRICTED mode
+	_, err := s.shim.DeleteBundle(context.Background(), &datastore.DeleteBundleRequest{
+		TrustDomainId: "spiffe://otherdomain.org",
+	})
+	s.RequireErrorContains(err, "store-etcd: cannot delete bundle; federated with 1 registration entries")
+}
 
-// func (s *PluginSuite) TestDeleteBundleDeleteRegistrationEntries() {
-// 	// create an unrelated registration entry to make sure the delete
-// 	// operation only deletes associated registration entries.
-// 	unrelated := s.createRegistrationEntry(&common.RegistrationEntry{
-// 		SpiffeId:  "spiffe://example.org/foo",
-// 		Selectors: []*common.Selector{{Type: "TYPE", Value: "VALUE"}},
-// 	})
+func (s *PluginSuite) TestDeleteBundleDeleteRegistrationEntries() {
+	// create an unrelated registration entry to make sure the delete
+	// operation only deletes associated registration entries.
+	unrelated := s.createRegistrationEntry(&common.RegistrationEntry{
+		SpiffeId:  "spiffe://example.org/foo",
+		Selectors: []*common.Selector{{Type: "TYPE", Value: "VALUE"}},
+	})
 
-// 	// create the bundle and associated entry
-// 	s.createBundle("spiffe://otherdomain.org")
-// 	entry := s.createRegistrationEntry(makeFederatedRegistrationEntry())
+	// create the bundle and associated entry
+	s.createBundle("spiffe://otherdomain.org")
+	entry := s.createRegistrationEntry(makeFederatedRegistrationEntry())
 
-// 	// delete the bundle in DELETE mode
-// 	_, err := s.shim.DeleteBundle(context.Background(), &datastore.DeleteBundleRequest{
-// 		TrustDomainId: "spiffe://otherdomain.org",
-// 		Mode:          datastore.DeleteBundleRequest_DELETE,
-// 	})
-// 	s.Require().NoError(err)
+	// delete the bundle in DELETE mode
+	_, err := s.shim.DeleteBundle(context.Background(), &datastore.DeleteBundleRequest{
+		TrustDomainId: "spiffe://otherdomain.org",
+		Mode:          datastore.DeleteBundleRequest_DELETE,
+	})
+	s.Require().NoError(err)
 
-// 	// verify that the registeration entry has been deleted
-// 	resp, err := s.shim.FetchRegistrationEntry(context.Background(), &datastore.FetchRegistrationEntryRequest{
-// 		EntryId: entry.EntryId,
-// 	})
-// 	s.Require().NoError(err)
-// 	s.Require().Nil(resp.Entry)
+	// verify that the registeration entry has been deleted
+	resp, err := s.shim.FetchRegistrationEntry(context.Background(), &datastore.FetchRegistrationEntryRequest{
+		EntryId: entry.EntryId,
+	})
+	s.Require().NoError(err)
+	s.Require().Nil(resp.Entry)
 
-// 	// make sure the unrelated entry still exists
-// 	s.fetchRegistrationEntry(unrelated.EntryId)
-// }
+	// make sure the unrelated entry still exists
+	s.fetchRegistrationEntry(unrelated.EntryId)
+}
 
-// func (s *PluginSuite) TestDeleteBundleDissociateRegistrationEntries() {
-// 	// create the bundle and associated entry
-// 	s.createBundle("spiffe://otherdomain.org")
-// 	entry := s.createRegistrationEntry(makeFederatedRegistrationEntry())
+func (s *PluginSuite) TestDeleteBundleDissociateRegistrationEntries() {
+	// create the bundle and associated entry
+	s.createBundle("spiffe://otherdomain.org")
+	entry := s.createRegistrationEntry(makeFederatedRegistrationEntry())
 
-// 	// delete the bundle in DISSOCIATE mode
-// 	_, err := s.shim.DeleteBundle(context.Background(), &datastore.DeleteBundleRequest{
-// 		TrustDomainId: "spiffe://otherdomain.org",
-// 		Mode:          datastore.DeleteBundleRequest_DISSOCIATE,
-// 	})
-// 	s.Require().NoError(err)
+	// delete the bundle in DISSOCIATE mode
+	_, err := s.shim.DeleteBundle(context.Background(), &datastore.DeleteBundleRequest{
+		TrustDomainId: "spiffe://otherdomain.org",
+		Mode:          datastore.DeleteBundleRequest_DISSOCIATE,
+	})
+	s.Require().NoError(err)
 
-// 	// make sure the entry still exists, albeit without an associated bundle
-// 	entry = s.fetchRegistrationEntry(entry.EntryId)
-// 	s.Require().Empty(entry.FederatesWith)
-// }
+	// make sure the entry still exists, albeit without an associated bundle
+	entry = s.fetchRegistrationEntry(entry.EntryId)
+	s.Require().Empty(entry.FederatesWith)
+}
 
 // ////////////////////////////////////////////////////////////////////////
 // //

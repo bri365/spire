@@ -103,7 +103,6 @@ func (s *Shim) CreateBundle(ctx context.Context,
 }
 
 // DeleteBundle removes the given bundle from the store
-// NOTE a returned bundle is currently not consumed by any caller, so it is not provided.
 func (s *Shim) DeleteBundle(ctx context.Context,
 	req *datastore.DeleteBundleRequest) (*datastore.DeleteBundleResponse, error) {
 
@@ -116,13 +115,72 @@ func (s *Shim) DeleteBundle(ctx context.Context,
 		return nil, err
 	}
 
-	// Add key, value, and compare present to ensure bundle exists
-	kvs := []*store.KeyValue{{Key: bundleKey(trustDomainID), Compare: store.Compare_PRESENT}}
+	// Get current bundle and version for transactional integrity
+	fb, ver, err := s.fetchBundle(ctx, &datastore.FetchBundleRequest{TrustDomainId: trustDomainID})
+	if err != nil {
+		return nil, err
+	}
+	if fb.Bundle == nil {
+		return nil, status.Error(codes.NotFound, "store-etcd: record not found")
+	}
+	b := fb.Bundle
 
-	// One put operation for this transaction
-	elements := []*store.SetRequestElement{{Operation: store.Operation_DELETE, Kvs: kvs}}
+	// Verify no registered entries are federated with this trust domain
+	gr, err := s.Store.Get(ctx, &store.GetRequest{
+		Key: entryFedByDomainKey("", trustDomainID),
+		End: entryFedByDomainEnd(trustDomainID),
+	})
+	if len(gr.Kvs) > 0 {
+		if req.Mode == datastore.DeleteBundleRequest_RESTRICT {
+			// Default behavior
+			msg := fmt.Sprintf("store-etcd: cannot delete bundle; federated with %d registration entries", len(gr.Kvs))
+			return nil, status.Error(codes.NotFound, msg)
+		}
 
-	_, err = s.Store.Set(ctx, &store.SetRequest{Elements: elements})
+		for _, kv := range gr.Kvs {
+			entryID, err := entryFedByDomainID(kv.Key)
+			if err != nil {
+				return nil, err
+			}
+
+			// Delete or remove the bundle from this registered entry as requested
+			// NOTE: for performance reasons at scale, these can be collected in
+			// transactions of a few hundred operations each.
+			if req.Mode == datastore.DeleteBundleRequest_DELETE {
+				_, err = s.DeleteRegistrationEntry(ctx, &datastore.DeleteRegistrationEntryRequest{EntryId: entryID})
+				if err != nil {
+					return nil, err
+				}
+			} else if req.Mode == datastore.DeleteBundleRequest_DISSOCIATE {
+				fe, _, err := s.fetchEntry(ctx, &datastore.FetchRegistrationEntryRequest{EntryId: entryID})
+				if err != nil {
+					return nil, err
+				}
+
+				fe.Entry.FederatesWith = removeString(fe.Entry.FederatesWith, trustDomainID)
+
+				_, err = s.UpdateRegistrationEntry(ctx, &datastore.UpdateRegistrationEntryRequest{
+					Entry: fe.Entry,
+					Mask:  &common.RegistrationEntryMask{FederatesWith: true},
+				})
+				if err != nil {
+					return nil, err
+				}
+			}
+		}
+	}
+
+	// Add to delete list, ensuring bundle version matches read from above
+	del := []*store.KeyValue{{
+		Key:     bundleKey(trustDomainID),
+		Compare: store.Compare_EQUALS,
+		Version: ver,
+	}}
+
+	// One delete operation for this transaction
+	tx := []*store.SetRequestElement{{Operation: store.Operation_DELETE, Kvs: del}}
+
+	_, err = s.Store.Set(ctx, &store.SetRequest{Elements: tx})
 	if err != nil {
 		st := status.Convert(err)
 		if st.Code() == codes.Aborted {
@@ -131,7 +189,7 @@ func (s *Shim) DeleteBundle(ctx context.Context,
 		return nil, err
 	}
 
-	return &datastore.DeleteBundleResponse{Bundle: &common.Bundle{}}, nil
+	return &datastore.DeleteBundleResponse{Bundle: b}, nil
 }
 
 // FetchBundle retrieves the given bundle by SpiffieID

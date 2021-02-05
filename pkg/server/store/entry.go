@@ -236,7 +236,6 @@ func (s *Shim) ListRegistrationEntries(ctx context.Context,
 		return nil, err
 	}
 	rev := res.Revision
-	s.log.Info(fmt.Sprintf("req: %v", req))
 
 	// A collection of IDs for the filtered results - maps make intersection easier
 	// NOTE: for performance reasons, organize the following filters with smallest expected results first
@@ -285,14 +284,12 @@ func (s *Shim) ListRegistrationEntries(ctx context.Context,
 	}
 
 	if req.BySelectors != nil {
-		s.log.Info(fmt.Sprintf("by selectors: %v", req.BySelectors))
 		subset := map[string]bool{}
 		for _, sel := range req.BySelectors.Selectors {
 			ids, err := s.entrySelMap(ctx, rev, sel)
 			if err != nil {
 				return nil, err
 			}
-			s.log.Info(fmt.Sprintf("ids: %v", ids))
 			if req.BySelectors.Match == datastore.BySelectors_MATCH_EXACT {
 				// The given selectors are the complete set for an entry to match
 				idMaps = append(idMaps, ids)
@@ -306,14 +303,11 @@ func (s *Shim) ListRegistrationEntries(ctx context.Context,
 			} else {
 				return nil, fmt.Errorf("unhandled match behavior %q", req.BySelectors.Match)
 			}
-			s.log.Info(fmt.Sprintf("subset: %v", subset))
 		}
 		if len(subset) > 0 {
 			idMaps = append(idMaps, subset)
 		}
 	}
-
-	s.log.Info(fmt.Sprintf("idMaps: %v", idMaps))
 
 	count := len(idMaps)
 	if count > 1 {
@@ -390,7 +384,6 @@ func (s *Shim) ListRegistrationEntries(ctx context.Context,
 			i++
 		}
 	} else {
-		s.log.Info(fmt.Sprintf("no filters key: %s, end: %s, limit: %d, rev: %d", key, allEntries, limit, rev))
 		// No filters, get all registered entries up to limit
 		res, err := s.Store.Get(ctx, &store.GetRequest{Key: key, End: allEntries, Limit: limit, Revision: rev})
 		if err != nil {
@@ -741,10 +734,16 @@ func (s *Shim) entryExpMap(ctx context.Context, rev, exp int64, after bool) (map
 	return ids, nil
 }
 
-// entryFedByDomainKey returns a string formatted key for a federated bundle domain indexed by registered entry id.
+// entryFedByDomainKey returns a string formatted key for a registered entry id indexed by federated bundle domain.
 // e.g. "IE|FED|spiffe://example.org|01242e4a-4563-4bf3-b000-12345678c12a"
 func entryFedByDomainKey(id, domain string) string {
 	return fmt.Sprintf("%s%s%s%s%s%s%s", indexKeyID, entryPrefix, FED, delim, domain, delim, id)
+}
+
+// entryFedByDomainEnd returns a string formatted range end key for a federated bundle domain.
+// e.g. "IE|FED|spiffe://example.org}"
+func entryFedByDomainEnd(domain string) string {
+	return fmt.Sprintf("%s%s%s%s%s%s", indexKeyID, entryPrefix, FED, delim, domain, delend)
 }
 
 // entryFedByDomainID returns the registered entry id from the given federation (FED) index key.
