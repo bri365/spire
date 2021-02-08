@@ -236,10 +236,13 @@ func Load(ctx context.Context, config Config) (*Repository, error) {
 		return nil, err
 	}
 
-	ss_logger := common_log.NewHCLogAdapter(config.Log, telemetry.PluginBuiltIn).Named("shim")
-	p.DataStore.DataStore = ss.New(ds, st, ss_logger)
+	ssLogger := common_log.NewHCLogAdapter(config.Log, telemetry.PluginBuiltIn).Named("shim")
+	p.DataStore.DataStore = ss.New(ds, st, ssLogger)
+	// TODO perhaps this should be WithMetrics(p.DataStore.DataStore, config.Metrics)
 	p.DataStore.DataStore = datastore_telemetry.WithMetrics(ds, config.Metrics)
+	// TODO replace the following with storeCache if store is configured?
 	p.DataStore.DataStore = dscache.New(p.DataStore.DataStore, clock.New())
+
 	p.KeyManager = keymanager_telemetry.WithMetrics(p.KeyManager, config.Metrics)
 
 	return &Repository{
