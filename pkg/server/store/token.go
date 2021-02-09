@@ -160,15 +160,16 @@ func tokenKey(id string) string {
 }
 
 // tokenExpKey returns a string formatted key for a join token indexed by expiry in seconds.
-// e.g. "IT|EXP|1611907252|abcd1234"
+// e.g. "TI|EXP|1611907252|abcd1234"
 // NOTE: %d without leading zeroes for time.Unix will work for the next ~250 years
 func tokenExpKey(id string, exp int64) string {
-	return fmt.Sprintf("%s%s%s%s%d%s%s", indexKeyID, tokenPrefix, EXP, delim, exp, delim, id)
+	return fmt.Sprintf("%s%s%s%d%s%s", tokenIndex, EXP, delim, exp, delim, id)
 }
 
 // tokenExpID returns the join token id from the given token expiry (EXP) index key.
 func tokenExpID(key string) (string, error) {
 	items := strings.Split(key, delim)
+	// TODO additional checks to ensure a properly formatted index?
 	if len(items) != 4 {
 		return "", fmt.Errorf("invalid token expiry index key: %s", key)
 	}
@@ -180,8 +181,8 @@ func tokenExpID(key string) (string, error) {
 // Use of a map facilitates easier intersection with other filters
 func (s *Shim) tokenExpMap(ctx context.Context, exp int64) (map[string]bool, error) {
 	// Set range to all index keys before the given time
-	key := fmt.Sprintf("%s%s%s%s", indexKeyID, tokenPrefix, EXP, delim)
-	end := fmt.Sprintf("%s%s%s%s%d", indexKeyID, tokenPrefix, EXP, delim, exp)
+	key := fmt.Sprintf("%s%s%s", tokenIndex, EXP, delim)
+	end := fmt.Sprintf("%s%s%s%d", tokenIndex, EXP, delim, exp)
 
 	res, err := s.Store.Get(ctx, &store.GetRequest{Key: key, End: end})
 	if err != nil {

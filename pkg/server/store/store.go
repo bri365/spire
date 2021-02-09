@@ -7,7 +7,7 @@
 //
 // Indices are stored with a Key string and no Value. Index keys are formatted as
 // <I><item key><delim><index field identifier>[...<delim><field value>]<delim><unique item identifier>
-// e.g. "IN|EXP|1611907252|spiffie://example.com/clusterA/nodeN" for an attested node expiry
+// e.g. "NI|EXP|1611907252|spiffie://example.com/clusterA/nodeN" for an attested node expiry
 //
 package store
 
@@ -80,7 +80,6 @@ var (
 	bundlePrefix = fmt.Sprintf("%s%s", bundleKeyID, delim)
 	entryPrefix  = fmt.Sprintf("%s%s", entryKeyID, delim)
 	nodePrefix   = fmt.Sprintf("%s%s", nodeKeyID, delim)
-	selPrefix    = fmt.Sprintf("%s%s", selKeyID, delim)
 	tokenPrefix  = fmt.Sprintf("%s%s", tokenKeyID, delim)
 
 	allBundles   = fmt.Sprintf("%s%s", bundleKeyID, delend)
@@ -88,8 +87,13 @@ var (
 	allNodes     = fmt.Sprintf("%s%s", nodeKeyID, delend)
 	allSelectors = fmt.Sprintf("%s%s", selKeyID, delend)
 
-	nodeExpPrefix = fmt.Sprintf("%s%s%s%s", indexKeyID, nodePrefix, EXP, delim)
-	nodeExpAll    = fmt.Sprintf("%s%s%s%s", indexKeyID, nodePrefix, EXP, delend)
+	bundleIndex = fmt.Sprintf("%s%s%s", bundleKeyID, indexKeyID, delim)
+	entryIndex  = fmt.Sprintf("%s%s%s", entryKeyID, indexKeyID, delim)
+	nodeIndex   = fmt.Sprintf("%s%s%s", nodeKeyID, indexKeyID, delim)
+	tokenIndex  = fmt.Sprintf("%s%s%s", tokenKeyID, indexKeyID, delim)
+
+	nodeExpPrefix = fmt.Sprintf("%s%s%s", nodeIndex, EXP, delim)
+	nodeExpAll    = fmt.Sprintf("%s%s%s", nodeIndex, EXP, delend)
 )
 
 // New returns an initialized store.

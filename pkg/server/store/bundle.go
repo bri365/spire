@@ -244,10 +244,12 @@ func (s *Shim) ListBundles(ctx context.Context,
 	}
 
 	resp, _, err = s.listBundles(ctx, 0, req)
+
 	return
 }
 
 // listBundles retrieves an optionally paginated list of all bundles.
+// Store revision is accepted and returned for consistency across paginated calls.
 func (s *Shim) listBundles(ctx context.Context, rev int64,
 	req *datastore.ListBundlesRequest) (*datastore.ListBundlesResponse, int64, error) {
 

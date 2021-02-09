@@ -433,9 +433,9 @@ func (s *Shim) PruneRegistrationEntries(ctx context.Context,
 	}
 
 	// Start range with EntryExpiry of 1 to exclude entries with no expiration (EntryExpiry = 0)
-	start := fmt.Sprintf("%s%s%s%s%d", indexKeyID, entryPrefix, EXP, delim, 1)
+	start := fmt.Sprintf("%s%s%s%d", entryIndex, EXP, delim, 1)
 	// End range with requested expiration time
-	end := fmt.Sprintf("%s%s%s%s%d", indexKeyID, entryPrefix, EXP, delim, req.ExpiresBefore)
+	end := fmt.Sprintf("%s%s%s%d", entryIndex, EXP, delim, req.ExpiresBefore)
 
 	// Get matching index keys
 	res, err := s.Store.Get(ctx, &store.GetRequest{Key: start, End: end})
@@ -702,10 +702,10 @@ func entryKey(id string) string {
 }
 
 // entryExpKey returns a string formatted key for a registered entry indexed by expiry in seconds.
-// e.g. "IE|EXP|1611907252|5fee2e4a-1fe3-4bf3-b4f0-55eaf268c12a"
+// e.g. "EI|EXP|1611907252|5fee2e4a-1fe3-4bf3-b4f0-55eaf268c12a"
 // NOTE: %d without leading zeroes for time.Unix will work for the next ~250 years
 func entryExpKey(id string, exp int64) string {
-	return fmt.Sprintf("%s%s%s%s%d%s%s", indexKeyID, entryPrefix, EXP, delim, exp, delim, id)
+	return fmt.Sprintf("%s%s%s%d%s%s", entryIndex, EXP, delim, exp, delim, id)
 }
 
 // entryExpID returns the registered entry id from the given entry expiry (EXP) index key.
@@ -724,11 +724,11 @@ func (s *Shim) entryExpMap(ctx context.Context, rev, exp int64, after bool) (map
 	// Set range to all index keys after or before the given time
 	key, end := "", ""
 	if after {
-		key = fmt.Sprintf("%s%s%s%s%d", indexKeyID, entryPrefix, EXP, delim, exp)
-		end = fmt.Sprintf("%s%s%s%s", indexKeyID, entryPrefix, EXP, delend)
+		key = fmt.Sprintf("%s%s%s%d", entryIndex, EXP, delim, exp)
+		end = fmt.Sprintf("%s%s%s", entryIndex, EXP, delend)
 	} else {
-		key = fmt.Sprintf("%s%s%s%s", indexKeyID, entryPrefix, EXP, delim)
-		end = fmt.Sprintf("%s%s%s%s%d", indexKeyID, entryPrefix, EXP, delim, exp)
+		key = fmt.Sprintf("%s%s%s", entryIndex, EXP, delim)
+		end = fmt.Sprintf("%s%s%s%d", entryIndex, EXP, delim, exp)
 	}
 
 	res, err := s.Store.Get(ctx, &store.GetRequest{Key: key, End: end, Revision: rev})
@@ -749,15 +749,15 @@ func (s *Shim) entryExpMap(ctx context.Context, rev, exp int64, after bool) (map
 }
 
 // entryFedByDomainKey returns a string formatted key for a registered entry id indexed by federated bundle domain.
-// e.g. "IE|FED|spiffe://example.org|01242e4a-4563-4bf3-b000-12345678c12a"
+// e.g. "EI|FED|spiffe://example.org|01242e4a-4563-4bf3-b000-12345678c12a"
 func entryFedByDomainKey(id, domain string) string {
-	return fmt.Sprintf("%s%s%s%s%s%s%s", indexKeyID, entryPrefix, FED, delim, domain, delim, id)
+	return fmt.Sprintf("%s%s%s%s%s%s", entryIndex, FED, delim, domain, delim, id)
 }
 
 // entryFedByDomainEnd returns a string formatted range end key for a federated bundle domain.
-// e.g. "IE|FED|spiffe://example.org}"
+// e.g. "EI|FED|spiffe://example.org}"
 func entryFedByDomainEnd(domain string) string {
-	return fmt.Sprintf("%s%s%s%s%s%s", indexKeyID, entryPrefix, FED, delim, domain, delend)
+	return fmt.Sprintf("%s%s%s%s%s", entryIndex, FED, delim, domain, delend)
 }
 
 // entryFedByDomainID returns the registered entry id from the given federation (FED) index key.
@@ -774,8 +774,8 @@ func entryFedByDomainID(key string) (string, error) {
 // Use of a map facilitates easier intersection with other filters
 func (s *Shim) entryFedByDomainMap(ctx context.Context, rev int64, domain string) (map[string]bool, error) {
 	// Set range to all index keys with the given parent ID
-	key := fmt.Sprintf("%s%s%s%s%s%s", indexKeyID, entryPrefix, FED, delim, domain, delim)
-	end := fmt.Sprintf("%s%s%s%s%s%s", indexKeyID, entryPrefix, FED, delim, domain, delend)
+	key := fmt.Sprintf("%s%s%s%s%s", entryIndex, FED, delim, domain, delim)
+	end := fmt.Sprintf("%s%s%s%s%s", entryIndex, FED, delim, domain, delend)
 
 	res, err := s.Store.Get(ctx, &store.GetRequest{Key: key, End: end, Revision: rev})
 	if err != nil {
@@ -795,9 +795,9 @@ func (s *Shim) entryFedByDomainMap(ctx context.Context, rev int64, domain string
 }
 
 // entryPidKey returns a string formatted key for a registered entry indexed by expiry in seconds.
-// e.g. "IE|PID|01242e4a-4563-4bf3-b000-12345678c12a|5fee2e4a-1fe3-4bf3-b4f0-55eaf268c12a"
+// e.g. "EI|PID|01242e4a-4563-4bf3-b000-12345678c12a|5fee2e4a-1fe3-4bf3-b4f0-55eaf268c12a"
 func entryPidKey(id, pid string) string {
-	return fmt.Sprintf("%s%s%s%s%s%s%s", indexKeyID, entryPrefix, PID, delim, pid, delim, id)
+	return fmt.Sprintf("%s%s%s%s%s%s", entryIndex, PID, delim, pid, delim, id)
 }
 
 // entryPidID returns the registered entry id from the given entry expiry (PID) index key.
@@ -814,8 +814,8 @@ func entryPidID(key string) (string, error) {
 // Use of a map facilitates easier intersection with other filters
 func (s *Shim) entryPidMap(ctx context.Context, rev int64, pid string) (map[string]bool, error) {
 	// Set range to all index keys with the given parent ID
-	key := fmt.Sprintf("%s%s%s%s%s%s", indexKeyID, entryPrefix, PID, delim, pid, delim)
-	end := fmt.Sprintf("%s%s%s%s%s%s", indexKeyID, entryPrefix, PID, delim, pid, delend)
+	key := fmt.Sprintf("%s%s%s%s%s", entryIndex, PID, delim, pid, delim)
+	end := fmt.Sprintf("%s%s%s%s%s", entryIndex, PID, delim, pid, delend)
 
 	res, err := s.Store.Get(ctx, &store.GetRequest{Key: key, End: end, Revision: rev})
 	if err != nil {
@@ -835,9 +835,9 @@ func (s *Shim) entryPidMap(ctx context.Context, rev int64, pid string) (map[stri
 }
 
 // entrySidKey returns a string formatted key for a registered entry indexed by expiry in seconds.
-// e.g. "IE|SID|01242e4a-4563-4bf3-b000-12345678c12a|5fee2e4a-1fe3-4bf3-b4f0-55eaf268c12a"
+// e.g. "EI|SID|01242e4a-4563-4bf3-b000-12345678c12a|5fee2e4a-1fe3-4bf3-b4f0-55eaf268c12a"
 func entrySidKey(id, sid string) string {
-	return fmt.Sprintf("%s%s%s%s%s%s%s", indexKeyID, entryPrefix, SID, delim, sid, delim, id)
+	return fmt.Sprintf("%s%s%s%s%s%s", entryIndex, SID, delim, sid, delim, id)
 }
 
 // entrySidID returns the registered entry id from the given entry expiry (SID) index key.
@@ -854,8 +854,8 @@ func entrySidID(key string) (string, error) {
 // Use of a map facilitates easier intersection with other filters
 func (s *Shim) entrySidMap(ctx context.Context, rev int64, sid string) (map[string]bool, error) {
 	// Set range to all index keys with the given parent ID
-	key := fmt.Sprintf("%s%s%s%s%s%s", indexKeyID, entryPrefix, SID, delim, sid, delim)
-	end := fmt.Sprintf("%s%s%s%s%s%s", indexKeyID, entryPrefix, SID, delim, sid, delend)
+	key := fmt.Sprintf("%s%s%s%s%s", entryIndex, SID, delim, sid, delim)
+	end := fmt.Sprintf("%s%s%s%s%s", entryIndex, SID, delim, sid, delend)
 
 	res, err := s.Store.Get(ctx, &store.GetRequest{Key: key, End: end, Revision: rev})
 	if err != nil {
@@ -875,9 +875,9 @@ func (s *Shim) entrySidMap(ctx context.Context, rev int64, sid string) (map[stri
 }
 
 // entrySelKey returns a string formatted key for a registered entry indexed by selector type and value.
-// e.g. "IE|TVI|a-type|a-value|5fee2e4a-1fe3-4bf3-b4f0-55eaf268c12a"
+// e.g. "EI|TVI|a-type|a-value|5fee2e4a-1fe3-4bf3-b4f0-55eaf268c12a"
 func entrySelKey(id string, s *common.Selector) string {
-	return fmt.Sprintf("%s%s%s%s%s%s%s%s%s", indexKeyID, entryPrefix, TVI, delim, s.Type, delim, s.Value, delim, id)
+	return fmt.Sprintf("%s%s%s%s%s%s%s%s", entryIndex, TVI, delim, s.Type, delim, s.Value, delim, id)
 }
 
 // entrySelID returns the registered entry id from the given type-value (TVI) index key
@@ -894,8 +894,8 @@ func entrySelID(key string) (string, error) {
 // Use of a map facilitates easier intersection with other filters
 func (s *Shim) entrySelMap(ctx context.Context, rev int64, sel *common.Selector) (map[string]bool, error) {
 	// Set range to all index keys for this type and value
-	key := fmt.Sprintf("%s%s%s%s%s%s%s%s", indexKeyID, entryPrefix, TVI, delim, sel.Type, delim, sel.Value, delim)
-	end := fmt.Sprintf("%s%s%s%s%s%s%s%s", indexKeyID, entryPrefix, TVI, delim, sel.Type, delim, sel.Value, delend)
+	key := fmt.Sprintf("%s%s%s%s%s%s%s", entryIndex, TVI, delim, sel.Type, delim, sel.Value, delim)
+	end := fmt.Sprintf("%s%s%s%s%s%s%s", entryIndex, TVI, delim, sel.Type, delim, sel.Value, delend)
 
 	res, err := s.Store.Get(ctx, &store.GetRequest{Key: key, End: end, Revision: rev})
 	if err != nil {
