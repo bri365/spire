@@ -199,18 +199,16 @@ func Load(ctx context.Context, config Config) (*Repository, error) {
 	// directly. This allows us to bypass gRPC and get rid of response limits.
 	storeConfig := config.PluginConfig[store.Type]
 	delete(config.PluginConfig, store.Type)
-	st, err := loadEtcdStore(ctx, config.Log, storeConfig)
-	if err != nil {
-		return nil, err
-	}
+	st, stErr := loadEtcdStore(ctx, config.Log, storeConfig)
 
 	// Strip out the Datastore plugin configuration and load the SQL plugin
 	// directly. This allows us to bypass gRPC and get rid of response limits.
 	dataStoreConfig := config.PluginConfig[datastore.Type]
 	delete(config.PluginConfig, datastore.Type)
-	ds, err := loadSQLDataStore(ctx, config.Log, dataStoreConfig)
-	if err != nil {
-		return nil, err
+	ds, dsErr := loadSQLDataStore(ctx, config.Log, dataStoreConfig)
+
+	if stErr != nil && dsErr != nil {
+		return nil, fmt.Errorf("Error loading both store and datastore; dsErr: %v and stErr: %v", dsErr, stErr)
 	}
 
 	pluginConfigs, err := catalog.PluginConfigsFromHCL(config.PluginConfig)
@@ -236,12 +234,21 @@ func Load(ctx context.Context, config Config) (*Repository, error) {
 		return nil, err
 	}
 
-	ssLogger := common_log.NewHCLogAdapter(config.Log, telemetry.PluginBuiltIn).Named("shim")
-	p.DataStore.DataStore = ss.New(ds, st, ssLogger)
-	// TODO perhaps this should be WithMetrics(p.DataStore.DataStore, config.Metrics)
-	p.DataStore.DataStore = datastore_telemetry.WithMetrics(ds, config.Metrics)
-	// TODO replace the following with storeCache if store is configured?
-	p.DataStore.DataStore = dscache.New(p.DataStore.DataStore, clock.New())
+	// Install the store shim as the datastore plugin, which will use
+	// etcd store if configured or SQL datastore otherwise.
+	ssLogger := common_log.NewHCLogAdapter(config.Log, telemetry.PluginBuiltIn).Named("ss")
+	p.DataStore.DataStore, err = ss.New(ds, st, ssLogger, st.Cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	// Add telemetry to datastore
+	p.DataStore.DataStore = datastore_telemetry.WithMetrics(p.DataStore.DataStore, config.Metrics)
+
+	// Disable datastore cache if store is configured - its cache is built in
+	if st == nil {
+		p.DataStore.DataStore = dscache.New(p.DataStore.DataStore, clock.New())
+	}
 
 	p.KeyManager = keymanager_telemetry.WithMetrics(p.KeyManager, config.Metrics)
 

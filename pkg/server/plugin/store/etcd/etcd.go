@@ -14,6 +14,7 @@ import (
 
 	"github.com/spiffe/spire/pkg/common/catalog"
 	"github.com/spiffe/spire/pkg/server/plugin/store"
+	ss "github.com/spiffe/spire/pkg/server/store"
 	spi "github.com/spiffe/spire/proto/spire/common/plugin"
 	pb "github.com/spiffe/spire/proto/spire/server/store"
 	"github.com/zeebo/errs"
@@ -49,6 +50,7 @@ var (
 type Plugin struct {
 	store.UnsafeStoreServer
 
+	Cfg *ss.Configuration
 	c   *clientv3.Client
 	mu  sync.Mutex
 	log hclog.Logger
@@ -118,6 +120,15 @@ func (st *Plugin) Configure(ctx context.Context, req *spi.ConfigureRequest) (*sp
 
 	if cfg.RequestTimeout != nil {
 		requestTimeout = time.Duration(*cfg.RequestTimeout) * time.Second
+	}
+
+	// Set Store level configuration
+	st.Cfg = &ss.Configuration{
+		DisableBundleRegCache: false,
+		DisableNodeCache:      false,
+		DisableTokenCache:     false,
+		HeartbeatInterval:     1,
+		WriteResponseDelay:    200,
 	}
 
 	// TODO set proper logging

@@ -216,26 +216,35 @@ func (s *Shim) fetchEntry(ctx context.Context,
 
 // ListRegistrationEntries lists all registrations (pagination available)
 func (s *Shim) ListRegistrationEntries(ctx context.Context,
-	req *datastore.ListRegistrationEntriesRequest) (*datastore.ListRegistrationEntriesResponse, error) {
+	req *datastore.ListRegistrationEntriesRequest) (resp *datastore.ListRegistrationEntriesResponse, err error) {
 
 	if s.Store == nil {
 		return s.DataStore.ListRegistrationEntries(ctx, req)
 	}
 
+	resp, _, err = s.listRegistrationEntries(ctx, 0, req)
+
+	return
+}
+
+// ListRegistrationEntries lists all registrations (pagination available)
+func (s *Shim) listRegistrationEntries(ctx context.Context, rev int64,
+	req *datastore.ListRegistrationEntriesRequest) (*datastore.ListRegistrationEntriesResponse, int64, error) {
+
 	if req.Pagination != nil && req.Pagination.PageSize == 0 {
-		return nil, status.Error(codes.InvalidArgument, "cannot paginate with pagesize = 0")
+		return nil, 0, status.Error(codes.InvalidArgument, "cannot paginate with pagesize = 0")
 	}
 	if req.BySelectors != nil && len(req.BySelectors.Selectors) == 0 {
-		return nil, status.Error(codes.InvalidArgument, "cannot list by empty selector set")
+		return nil, 0, status.Error(codes.InvalidArgument, "cannot list by empty selector set")
 	}
 
 	// Get the current store revision for use in subsequent calls to ensure
 	// transactional consistency of all item and index read operations.
-	res, err := s.Store.Get(ctx, &store.GetRequest{Key: entryPrefix, End: allEntries, Limit: 1})
+	res, err := s.Store.Get(ctx, &store.GetRequest{Key: entryPrefix, End: allEntries, Limit: 1, Revision: rev})
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	rev := res.Revision
+	rev = res.Revision
 
 	// A collection of IDs for the filtered results - maps make intersection easier
 	// NOTE: for performance reasons, organize the following filters with smallest expected results first
@@ -244,7 +253,7 @@ func (s *Shim) ListRegistrationEntries(ctx context.Context,
 	if req.BySpiffeId != nil && req.BySpiffeId.Value != "" {
 		ids, err := s.entrySidMap(ctx, rev, req.BySpiffeId.Value)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		idMaps = append(idMaps, ids)
 	}
@@ -252,7 +261,7 @@ func (s *Shim) ListRegistrationEntries(ctx context.Context,
 	if req.ByParentId != nil && req.ByParentId.Value != "" {
 		ids, err := s.entryPidMap(ctx, rev, req.ByParentId.Value)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		idMaps = append(idMaps, ids)
 	}
@@ -262,7 +271,7 @@ func (s *Shim) ListRegistrationEntries(ctx context.Context,
 		for _, domain := range req.ByFederatesWith.TrustDomains {
 			ids, err := s.entryFedByDomainMap(ctx, rev, domain)
 			if err != nil {
-				return nil, err
+				return nil, 0, err
 			}
 			if req.ByFederatesWith.Match == datastore.ByFederatesWith_MATCH_EXACT {
 				// The given selectors are the complete set for an entry to match
@@ -275,7 +284,7 @@ func (s *Shim) ListRegistrationEntries(ctx context.Context,
 					subset[id] = true
 				}
 			} else {
-				return nil, fmt.Errorf("unhandled match behavior %q", req.ByFederatesWith.Match)
+				return nil, 0, fmt.Errorf("unhandled match behavior %q", req.ByFederatesWith.Match)
 			}
 		}
 		if len(subset) > 0 {
@@ -288,7 +297,7 @@ func (s *Shim) ListRegistrationEntries(ctx context.Context,
 		for _, sel := range req.BySelectors.Selectors {
 			ids, err := s.entrySelMap(ctx, rev, sel)
 			if err != nil {
-				return nil, err
+				return nil, 0, err
 			}
 			if req.BySelectors.Match == datastore.BySelectors_MATCH_EXACT {
 				// The given selectors are the complete set for an entry to match
@@ -301,7 +310,7 @@ func (s *Shim) ListRegistrationEntries(ctx context.Context,
 					subset[id] = true
 				}
 			} else {
-				return nil, fmt.Errorf("unhandled match behavior %q", req.BySelectors.Match)
+				return nil, 0, fmt.Errorf("unhandled match behavior %q", req.BySelectors.Match)
 			}
 		}
 		if len(subset) > 0 {
@@ -311,7 +320,8 @@ func (s *Shim) ListRegistrationEntries(ctx context.Context,
 
 	count := len(idMaps)
 	if count > 1 {
-		// intersect query maps into the first one
+		// intersect each additional query map into the first map
+		// resulting in a single list of IDs meeting all filter criteria
 		for i := 1; i < count; i++ {
 			tmp := map[string]bool{}
 			for id := range idMaps[0] {
@@ -332,7 +342,7 @@ func (s *Shim) ListRegistrationEntries(ctx context.Context,
 		limit = int64(p.PageSize)
 		if len(p.Token) > 0 {
 			if len(p.Token) < 5 || p.Token[0:2] != entryPrefix {
-				return nil, status.Errorf(codes.InvalidArgument, "could not parse token '%s'", p.Token)
+				return nil, 0, status.Errorf(codes.InvalidArgument, "could not parse token '%s'", p.Token)
 			}
 			// TODO one bit larger than token
 			key = fmt.Sprintf("%s!", p.Token)
@@ -361,13 +371,13 @@ func (s *Shim) ListRegistrationEntries(ctx context.Context,
 
 			res, err := s.Store.Get(ctx, &store.GetRequest{Key: entryKey(id), Revision: rev})
 			if err != nil {
-				return nil, err
+				return nil, 0, err
 			}
 
 			if len(res.Kvs) == 1 {
 				e := &common.RegistrationEntry{}
 				if err = proto.Unmarshal(res.Kvs[0].Value, e); err != nil {
-					return nil, err
+					return nil, 0, err
 				}
 				if req.BySelectors != nil {
 					if !s.entrySelectorMatch(e, req.BySelectors) {
@@ -387,13 +397,13 @@ func (s *Shim) ListRegistrationEntries(ctx context.Context,
 		// No filters, get all registered entries up to limit
 		res, err := s.Store.Get(ctx, &store.GetRequest{Key: key, End: allEntries, Limit: limit, Revision: rev})
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 
 		for _, kv := range res.Kvs {
 			e := &common.RegistrationEntry{}
 			if err = proto.Unmarshal(kv.Value, e); err != nil {
-				return nil, err
+				return nil, 0, err
 			}
 			resp.Entries = append(resp.Entries, e)
 			lastKey = kv.Key
@@ -412,7 +422,7 @@ func (s *Shim) ListRegistrationEntries(ctx context.Context,
 		resp.Pagination = p
 	}
 
-	return resp, nil
+	return resp, rev, nil
 }
 
 // PruneRegistrationEntries deletes all entries which have expired before the given time
@@ -668,6 +678,7 @@ func (s *Shim) newRegistrationEntryID() (string, error) {
 	/////////////////////////////////////////////
 	//     testing     testing     testing     //
 	// Get the current store revision for use as incremental EntryIds for testing.
+	// TODO remove need for this
 	//
 	res, err := s.Store.Get(context.TODO(), &store.GetRequest{Key: entryPrefix, End: allEntries, Limit: 1})
 	if err != nil {

@@ -203,6 +203,11 @@ func (s *PluginSuite) TestListRegistrationEntries() {
 	s.RequireProtoEqual(expectedResponse, resp)
 }
 
+// TODO handle real random registration entry ids
+// Entries are returned from the store sorted by ID
+// so pagination tokens are currently not predictable
+// in advance with the current test design
+
 func (s *PluginSuite) TestListRegistrationEntriesWithPagination() {
 	entry1 := s.createRegistrationEntry(&common.RegistrationEntry{
 		Selectors: []*common.Selector{

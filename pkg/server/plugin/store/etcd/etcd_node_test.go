@@ -953,7 +953,7 @@ func (s *PluginSuite) TestSetNodeSelectorsUnderLoad() {
 		CertNotAfter:        time.Now().Add(time.Hour).Unix(),
 	}
 
-	for i := 0; i < numWorkers*11; i++ {
+	for i := 0; i < numWorkers+1; i++ {
 		node.SpiffeId = fmt.Sprintf("ID%d", i)
 		_, err := s.shim.CreateAttestedNode(ctx, &datastore.CreateAttestedNodeRequest{Node: node})
 		s.Require().NoError(err)

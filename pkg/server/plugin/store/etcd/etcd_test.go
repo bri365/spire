@@ -52,7 +52,7 @@ type PluginSuite struct {
 	dir        string
 	nextID     int
 	st         store.Plugin
-	shim       ss.Shim
+	shim       *ss.Shim
 	etcdPlugin *Plugin
 }
 
@@ -100,12 +100,16 @@ func (s *PluginSuite) SetupSuite() {
 }
 
 func (s *PluginSuite) SetupTest() {
+	var err error
 	s.T().Log("SetupTest")
 	log, _ := common_log.NewLogger()
 	ssLogger := common_log.NewHCLogAdapter(log, telemetry.PluginBuiltIn).Named("shim")
 	s.st = s.newPlugin()
-	shim := ss.New(nil, s.st, ssLogger)
-	s.shim = *shim
+	cfg := &ss.Configuration{}
+	s.shim, err = ss.New(nil, s.st, ssLogger, cfg)
+	if err != nil {
+		s.T().Log(err)
+	}
 
 	// delete all keys from the store
 	res, err := s.st.Get(context.Background(), &store.GetRequest{

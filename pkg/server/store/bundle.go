@@ -237,14 +237,22 @@ func (s *Shim) fetchBundle(ctx context.Context,
 
 // ListBundles retrieves an optionally paginated list of all bundles.
 func (s *Shim) ListBundles(ctx context.Context,
-	req *datastore.ListBundlesRequest) (*datastore.ListBundlesResponse, error) {
+	req *datastore.ListBundlesRequest) (resp *datastore.ListBundlesResponse, err error) {
 
 	if s.Store == nil {
 		return s.DataStore.ListBundles(ctx, req)
 	}
 
+	resp, _, err = s.listBundles(ctx, 0, req)
+	return
+}
+
+// listBundles retrieves an optionally paginated list of all bundles.
+func (s *Shim) listBundles(ctx context.Context, rev int64,
+	req *datastore.ListBundlesRequest) (*datastore.ListBundlesResponse, int64, error) {
+
 	if req.Pagination != nil && req.Pagination.PageSize == 0 {
-		return nil, status.Error(codes.InvalidArgument, "cannot paginate with pagesize = 0")
+		return nil, 0, status.Error(codes.InvalidArgument, "cannot paginate with pagesize = 0")
 	}
 
 	// Start with all bundle identifiers and limit of 0 (no limit)
@@ -256,17 +264,18 @@ func (s *Shim) ListBundles(ctx context.Context,
 	if p != nil {
 		limit = int64(p.PageSize)
 		if len(p.Token) > 0 {
+			// Validate token
 			if len(p.Token) < 12 || p.Token[0:2] != key {
-				return nil, status.Errorf(codes.InvalidArgument, "could not parse token '%s'", p.Token)
+				return nil, 0, status.Errorf(codes.InvalidArgument, "could not parse token '%s'", p.Token)
 			}
 			// TODO one bit larger than token
 			key = fmt.Sprintf("%s ", p.Token)
 		}
 	}
 
-	res, err := s.Store.Get(ctx, &store.GetRequest{Key: key, End: end, Limit: limit})
+	res, err := s.Store.Get(ctx, &store.GetRequest{Key: key, End: end, Limit: limit, Revision: rev})
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	lastKey := ""
@@ -275,7 +284,7 @@ func (s *Shim) ListBundles(ctx context.Context,
 		b := &common.Bundle{}
 		err = proto.Unmarshal(kv.Value, b)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		resp.Bundles = append(resp.Bundles, b)
 		lastKey = kv.Key
@@ -289,7 +298,7 @@ func (s *Shim) ListBundles(ctx context.Context,
 		}
 		resp.Pagination = p
 	}
-	return resp, nil
+	return resp, res.Revision, nil
 }
 
 // PruneBundle removes expired certs and keys from a bundle

@@ -1,4 +1,4 @@
-// Package store implements a datastore shim with the proposed new store interface.
+// Package store implements a new datastore layer with the proposed new store interface.
 //
 // Items are stored with a key string and the marshalled protobuf data as the value
 // Keys are formatted as <item key><delim><unique identifier>
@@ -14,29 +14,40 @@ package store
 import (
 	"fmt"
 
+	"github.com/andres-erbsen/clock"
 	"github.com/hashicorp/go-hclog"
 	"github.com/spiffe/spire/pkg/server/plugin/datastore"
 	"github.com/spiffe/spire/pkg/server/plugin/store"
 )
 
-// Shim defines a datastore shim to allow the new Store API
+// Shim defines a temporary datastore shim to allow the new Store API
 // to coexist with the existing datastore API during prototyping.
 type Shim struct {
 	datastore.DataStore
 	store.Store
 
-	log hclog.Logger
+	cache Cache
+	cfg   *Configuration
+	log   hclog.Logger
+}
+
+// Configuration represents store wide config, supplied by the plugin
+type Configuration struct {
+	DisableBundleRegCache bool
+	DisableNodeCache      bool
+	DisableTokenCache     bool
+	HeartbeatInterval     int
+	WriteResponseDelay    int
 }
 
 // Key creation constants for items and indices
+// NOTE: changing any of these constants will require migrating store data
 const (
-	// Key constructs - changing these will require migrating existing stored data
-
-	// NOTE: prefer a printable character not part of a conforming URI for delimiter
+	// NOTE: prefer a printable character not part of a conforming URI
 	delim = "|"
 
 	// Object identifiers
-	// NOTE: these could be an enum if readability is not valued for debugability
+	// NOTE: these could be an enum if readability is not important for debugability
 	indexKeyID = "I"
 
 	bundleKeyID = "B"
@@ -50,7 +61,7 @@ const (
 	// feels like overkill and would be less readable for debugging.
 	ADT = "ADT" // AttestationDataType
 	CNA = "CNA" // CertNotAfter
-	BAN = "BAN" // Banned (CertSerialNumber empty or not)
+	BAN = "BAN" // Banned
 	EXP = "EXP" // Expiry
 	FED = "FED" // Federation
 	PID = "PID" // ParentId
@@ -61,8 +72,8 @@ const (
 var (
 	storeLoaded = false
 
-	// NOTE: this is one bit greater than delimiter - it is used in range end to get
-	// all key values after the delimiter in the range key.
+	// NOTE: this is one bit greater than the delimiter - it is used to end
+	// a range to get all key values for a given prefix.
 	delend = string(delim[0] + 1)
 
 	// Key creation and comparison values
@@ -81,18 +92,12 @@ var (
 	nodeExpAll    = fmt.Sprintf("%s%s%s%s", indexKeyID, nodePrefix, EXP, delend)
 )
 
-// New returns an initialized storage shim.
-func New(ds datastore.DataStore, st store.Store, logger hclog.Logger) *Shim {
-	return &Shim{DataStore: ds, Store: st, log: logger}
-}
-
-// removeString removes the given string from an array, if present
-func removeString(a []string, s string) []string {
-	for i, v := range a {
-		if v == s {
-			a[i] = a[len(a)-1]
-			return a[:len(a)-1]
-		}
+// New returns an initialized store.
+func New(ds datastore.DataStore, st store.Store, logger hclog.Logger, cfg *Configuration) (*Shim, error) {
+	store := &Shim{DataStore: ds, Store: st, log: logger}
+	store.cache = NewCache(cfg, clock.New(), logger)
+	if err := store.Initialize(); err != nil {
+		return nil, err
 	}
-	return a
+	return store, nil
 }
