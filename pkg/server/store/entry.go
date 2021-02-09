@@ -227,7 +227,8 @@ func (s *Shim) ListRegistrationEntries(ctx context.Context,
 	return
 }
 
-// ListRegistrationEntries lists all registrations (pagination available)
+// listRegistrationEntries lists all registrations (pagination available)
+// Store revision is accepted and returned for consistency across paginated calls.
 func (s *Shim) listRegistrationEntries(ctx context.Context, rev int64,
 	req *datastore.ListRegistrationEntriesRequest) (*datastore.ListRegistrationEntriesResponse, int64, error) {
 

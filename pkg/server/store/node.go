@@ -174,34 +174,45 @@ func (s *Shim) fetchNode(ctx context.Context,
 
 // ListAttestedNodes lists all attested nodes, optionally filtered and/or paginated.
 func (s *Shim) ListAttestedNodes(ctx context.Context,
-	req *datastore.ListAttestedNodesRequest) (*datastore.ListAttestedNodesResponse, error) {
+	req *datastore.ListAttestedNodesRequest) (resp *datastore.ListAttestedNodesResponse, err error) {
 
 	if s.Store == nil {
 		return s.DataStore.ListAttestedNodes(ctx, req)
 	}
 
+	resp, _, err = s.listAttestedNodes(ctx, 0, req)
+
+	return
+}
+
+// listAttestedNodes lists all attested nodes, optionally filtered and/or paginated.
+// Store revision is accepted and returned for consistency across paginated calls.
+func (s *Shim) listAttestedNodes(ctx context.Context, rev int64,
+	req *datastore.ListAttestedNodesRequest) (*datastore.ListAttestedNodesResponse, int64, error) {
+
 	if req.Pagination != nil && req.Pagination.PageSize == 0 {
-		return nil, status.Error(codes.InvalidArgument, "cannot paginate with pagesize = 0")
+		return nil, 0, status.Error(codes.InvalidArgument, "cannot paginate with pagesize = 0")
 	}
 	if req.BySelectorMatch != nil && len(req.BySelectorMatch.Selectors) == 0 {
-		return nil, status.Error(codes.InvalidArgument, "cannot list by empty selectors set")
+		return nil, 0, status.Error(codes.InvalidArgument, "cannot list by empty selectors set")
 	}
 
 	// Get the current store revision for use in subsequent calls to ensure
 	// transactional consistency of all item and index read operations.
 	res, err := s.Store.Get(ctx, &store.GetRequest{Key: nodePrefix, End: allNodes, Limit: 1})
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	rev := res.Revision
+	rev = res.Revision
 
 	// A collection of IDs for the filtered results - maps make intersection easier
+	// NOTE: for performance reasons, organize the following filters with smallest expected results first
 	idMaps := []map[string]bool{}
 
 	if req.ByAttestationType != "" {
 		ids, err := s.nodeAdtMap(ctx, rev, req.ByAttestationType)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		idMaps = append(idMaps, ids)
 	}
@@ -209,7 +220,7 @@ func (s *Shim) ListAttestedNodes(ctx context.Context,
 	if req.ByBanned != nil {
 		ids, err := s.nodeBanMap(ctx, rev, req.ByBanned.Value)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		idMaps = append(idMaps, ids)
 	}
@@ -217,7 +228,7 @@ func (s *Shim) ListAttestedNodes(ctx context.Context,
 	if req.ByExpiresBefore != nil {
 		ids, err := s.nodeExpMap(ctx, rev, req.ByExpiresBefore.Value, false)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		idMaps = append(idMaps, ids)
 	}
@@ -227,7 +238,7 @@ func (s *Shim) ListAttestedNodes(ctx context.Context,
 		for _, sel := range req.BySelectorMatch.Selectors {
 			ids, err := s.nodeSelMap(ctx, rev, sel)
 			if err != nil {
-				return nil, err
+				return nil, 0, err
 			}
 			if req.BySelectorMatch.Match == datastore.BySelectors_MATCH_EXACT {
 				// The given selectors are the complete set for a node to match
@@ -240,7 +251,7 @@ func (s *Shim) ListAttestedNodes(ctx context.Context,
 					subset[id] = true
 				}
 			} else {
-				return nil, fmt.Errorf("unhandled match behavior %q", req.BySelectorMatch.Match)
+				return nil, 0, fmt.Errorf("unhandled match behavior %q", req.BySelectorMatch.Match)
 			}
 		}
 		if len(subset) > 0 {
@@ -271,7 +282,7 @@ func (s *Shim) ListAttestedNodes(ctx context.Context,
 		limit = int64(p.PageSize)
 		if len(p.Token) > 0 {
 			if len(p.Token) < 5 || p.Token[0:2] != nodePrefix {
-				return nil, status.Errorf(codes.InvalidArgument, "could not parse token '%s'", p.Token)
+				return nil, 0, status.Errorf(codes.InvalidArgument, "could not parse token '%s'", p.Token)
 			}
 			// TODO one bit larger than token
 			key = fmt.Sprintf("%s!", p.Token)
@@ -300,14 +311,14 @@ func (s *Shim) ListAttestedNodes(ctx context.Context,
 
 			res, err := s.Store.Get(ctx, &store.GetRequest{Key: nodeKey(id), Revision: rev})
 			if err != nil {
-				return nil, err
+				return nil, 0, err
 			}
 
 			if len(res.Kvs) == 1 {
 				n := &common.AttestedNode{}
 				err = proto.Unmarshal(res.Kvs[0].Value, n)
 				if err != nil {
-					return nil, err
+					return nil, 0, err
 				}
 				if req.BySelectorMatch != nil {
 					if !s.nodeSelectorMatch(n, req.BySelectorMatch) {
@@ -332,14 +343,14 @@ func (s *Shim) ListAttestedNodes(ctx context.Context,
 		end := allNodes
 		res, err := s.Store.Get(ctx, &store.GetRequest{Key: key, End: end, Limit: limit, Revision: rev})
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 
 		for _, kv := range res.Kvs {
 			n := &common.AttestedNode{}
 			err = proto.Unmarshal(kv.Value, n)
 			if err != nil {
-				return nil, err
+				return nil, 0, err
 			}
 			if req.FetchSelectors == false {
 				n.Selectors = nil
@@ -361,7 +372,7 @@ func (s *Shim) ListAttestedNodes(ctx context.Context,
 		resp.Pagination = p
 	}
 
-	return resp, nil
+	return resp, rev, nil
 }
 
 // UpdateAttestedNode updates cert serial number and/or expiration for the given node.

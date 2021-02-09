@@ -178,23 +178,49 @@ func (s *Shim) loadBundlesAndRegistrations(revision int64) (rev int64, err error
 
 	s.cache.brStoreRevision = rev
 
-	return rev, nil
+	return
 }
 
 // loadNodes performs the initial cache load for attested nodes.
-func (s *Shim) loadNodes(rev int64) (int64, error) {
+func (s *Shim) loadNodes(revision int64) (rev int64, err error) {
 	s.cache.nodeMu.Lock()
 	defer s.cache.nodeMu.Unlock()
-	//
-	return rev, nil
+
+	nr := &datastore.ListAttestedNodesResponse{}
+	rev = revision
+	token := ""
+	for {
+		nr, rev, err = s.listAttestedNodes(context.TODO(), rev, &datastore.ListAttestedNodesRequest{
+			Pagination: &datastore.Pagination{Token: token, PageSize: loadPageSize}})
+		if err != nil {
+			return 0, err
+		}
+
+		count := len(nr.Nodes)
+		token = nr.Pagination.Token
+		s.log.Info(fmt.Sprintf("load nodes count: %d, token: %s, rev: %d", count, token, rev))
+		if token == "" || count == 0 {
+			break
+		}
+
+		for _, n := range nr.Nodes {
+			s.cache.nodes[n.SpiffeId] = &nodeCacheEntry{node: n}
+		}
+	}
+
+	s.cache.nStoreRevision = rev
+
+	return
 }
 
 // loadTokens performs the initial cache load for join tokens.
-func (s *Shim) loadTokens(rev int64) (int64, error) {
+func (s *Shim) loadTokens(revision int64) (rev int64, err error) {
 	s.cache.tokenMu.Lock()
 	defer s.cache.tokenMu.Unlock()
-	//
-	return rev, nil
+
+	// TODO implement after listJoinTokens
+
+	return
 }
 
 // watchBundlesAndRegistrations receives a stream of updates (deletes or puts)

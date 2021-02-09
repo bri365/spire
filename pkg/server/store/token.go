@@ -143,6 +143,8 @@ func (s *Shim) PruneJoinTokens(ctx context.Context,
 	}
 
 	// Delete expired registered entries
+	// NOTE: for improved performance, send these in transactions
+	// of one hundred or so rather than one at a time
 	for id := range ids {
 		_, err = s.DeleteJoinToken(ctx, &datastore.DeleteJoinTokenRequest{Token: id})
 		if err != nil {
