@@ -74,6 +74,8 @@ type DataStoreClient interface {
 	FetchJoinToken(ctx context.Context, in *FetchJoinTokenRequest, opts ...grpc.CallOption) (*FetchJoinTokenResponse, error)
 	// Delete a specific join token
 	DeleteJoinToken(ctx context.Context, in *DeleteJoinTokenRequest, opts ...grpc.CallOption) (*DeleteJoinTokenResponse, error)
+	// Lists join tokens (optionally filtered)
+	// rpc ListJoinTokens(ListJoinTokensRequest) returns (ListJoinTokensResponse);
 	// Prunes all join tokens that expire before the specified timestamp
 	PruneJoinTokens(ctx context.Context, in *PruneJoinTokensRequest, opts ...grpc.CallOption) (*PruneJoinTokensResponse, error)
 	// Applies the plugin configuration
@@ -429,6 +431,8 @@ type DataStoreServer interface {
 	FetchJoinToken(context.Context, *FetchJoinTokenRequest) (*FetchJoinTokenResponse, error)
 	// Delete a specific join token
 	DeleteJoinToken(context.Context, *DeleteJoinTokenRequest) (*DeleteJoinTokenResponse, error)
+	// Lists join tokens (optionally filtered)
+	// rpc ListJoinTokens(ListJoinTokensRequest) returns (ListJoinTokensResponse);
 	// Prunes all join tokens that expire before the specified timestamp
 	PruneJoinTokens(context.Context, *PruneJoinTokensRequest) (*PruneJoinTokensResponse, error)
 	// Applies the plugin configuration

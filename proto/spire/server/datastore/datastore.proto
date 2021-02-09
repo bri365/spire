@@ -305,6 +305,9 @@ message JoinToken {
 
     // Expiration in seconds since unix epoch
     int64 expiry = 2;
+
+    // Version of this item
+    int64 version = 3;
 }
 
 message CreateJoinTokenRequest {
@@ -329,6 +332,15 @@ message DeleteJoinTokenRequest {
 
 message DeleteJoinTokenResponse {
     JoinToken join_token = 1;
+}
+
+message ListJoinTokensRequest {
+    Pagination pagination = 1;
+}
+
+message ListJoinTokensResponse {
+    repeated JoinToken join_tokens = 1;
+    Pagination pagination = 2;
 }
 
 message PruneJoinTokensRequest {
@@ -404,6 +416,8 @@ service DataStore {
     rpc FetchJoinToken(FetchJoinTokenRequest) returns (FetchJoinTokenResponse);
     // Delete a specific join token
     rpc DeleteJoinToken(DeleteJoinTokenRequest) returns (DeleteJoinTokenResponse);
+    // Lists join tokens (optionally filtered)
+    // rpc ListJoinTokens(ListJoinTokensRequest) returns (ListJoinTokensResponse);
     // Prunes all join tokens that expire before the specified timestamp
     rpc PruneJoinTokens(PruneJoinTokensRequest) returns (PruneJoinTokensResponse);
 

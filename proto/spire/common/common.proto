@@ -51,6 +51,9 @@ message AttestedNode {
 
     // Node selectors
     repeated Selector selectors = 7;
+
+    // Revision number is bumped every time the attested node is updated
+    int64 revision_number = 8;
 }
 
 /** This is a curated record that the Server uses to set up and
@@ -136,6 +139,9 @@ message Bundle {
     /** refresh hint is a hint, in seconds, on how often a bundle consumer
      * should poll for bundle updates */
     int64 refresh_hint = 4;
+
+    /** Revision number is bumped every time the bundle is updated */
+    int64 revision_number = 5;
 }
 
 message BundleMask {
