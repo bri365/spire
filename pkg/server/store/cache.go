@@ -12,30 +12,6 @@ import (
 	"github.com/spiffe/spire/proto/spire/common"
 )
 
-type bundleCacheEntry struct {
-	bundle *common.Bundle
-	mu     sync.Mutex
-	ver    int64
-}
-
-type nodeCacheEntry struct {
-	node *common.AttestedNode
-	mu   sync.Mutex
-	ver  int64
-}
-
-type registrationCacheEntry struct {
-	entry *common.RegistrationEntry
-	mu    sync.Mutex
-	ver   int64
-}
-
-type tokenCacheEntry struct {
-	bundle *datastore.JoinToken
-	mu     sync.Mutex
-	ver    int64
-}
-
 // Cache represents the in-memory cache for Store object groups
 type Cache struct {
 	datastore.DataStore
@@ -47,23 +23,26 @@ type Cache struct {
 	brCacheEnabled  bool
 	brStoreRevision int64
 	bundleRegMu     sync.Mutex
-	bundles         map[string]*bundleCacheEntry
-	registrations   map[string]*registrationCacheEntry
+	bundles         map[string]*common.Bundle
+	registrations   map[string]*common.RegistrationEntry
 
-	nCacheEnabled  bool
-	nStoreRevision int64
-	nodeMu         sync.Mutex
-	nodes          map[string]*nodeCacheEntry
+	nodeCacheEnabled bool
+	nStoreRevision   int64
+	nodeMu           sync.Mutex
+	nodes            map[string]*common.AttestedNode
 
-	tCacheEnabled  bool
-	tStoreRevision int64
-	tokenMu        sync.Mutex
-	tokens         map[string]*tokenCacheEntry
+	tokenCacheEnabled bool
+	tStoreRevision    int64
+	tokenMu           sync.Mutex
+	tokens            map[string]*datastore.JoinToken
 }
 
 // Store cache constants
 const (
 	loadPageSize = 10000
+
+	// TxEotTtl defines the lifespan of the end of transaction markers in seconds
+	TxEotTTL = 60
 
 	// Heartbeat interval for inter-server timing events
 	storeCacheHeartbeatInterval = time.Second
@@ -78,14 +57,14 @@ func NewCache(cfg *Configuration, clock clock.Clock, logger hclog.Logger) Cache 
 		clock: clock,
 		log:   logger,
 
-		bundles:       map[string]*bundleCacheEntry{},
-		registrations: map[string]*registrationCacheEntry{},
-		nodes:         map[string]*nodeCacheEntry{},
-		tokens:        map[string]*tokenCacheEntry{},
+		bundles:       map[string]*common.Bundle{},
+		registrations: map[string]*common.RegistrationEntry{},
+		nodes:         map[string]*common.AttestedNode{},
+		tokens:        map[string]*datastore.JoinToken{},
 
-		brCacheEnabled: !cfg.DisableBundleRegCache,
-		nCacheEnabled:  !cfg.DisableNodeCache,
-		tCacheEnabled:  !cfg.DisableTokenCache,
+		brCacheEnabled:    !cfg.DisableBundleRegCache,
+		nodeCacheEnabled:  !cfg.DisableNodeCache,
+		tokenCacheEnabled: !cfg.DisableTokenCache,
 	}
 }
 
@@ -108,7 +87,7 @@ func (s *Shim) Initialize() error {
 		go s.watchBundlesAndRegistrations()
 	}
 
-	if s.cache.nCacheEnabled {
+	if s.cache.nodeCacheEnabled {
 		_, err = s.loadNodes(rev)
 		if err != nil {
 			return err
@@ -116,7 +95,7 @@ func (s *Shim) Initialize() error {
 		go s.watchNodes()
 	}
 
-	if s.cache.tCacheEnabled {
+	if s.cache.tokenCacheEnabled {
 		_, err = s.loadTokens(rev)
 		if err != nil {
 			return err
@@ -151,7 +130,7 @@ func (s *Shim) loadBundlesAndRegistrations(revision int64) (rev int64, err error
 		}
 
 		for _, b := range br.Bundles {
-			s.cache.bundles[b.TrustDomainId] = &bundleCacheEntry{bundle: b}
+			s.cache.bundles[b.TrustDomainId] = b
 		}
 	}
 
@@ -172,7 +151,7 @@ func (s *Shim) loadBundlesAndRegistrations(revision int64) (rev int64, err error
 		}
 
 		for _, e := range er.Entries {
-			s.cache.registrations[e.EntryId] = &registrationCacheEntry{entry: e}
+			s.cache.registrations[e.EntryId] = e
 		}
 	}
 
@@ -204,7 +183,7 @@ func (s *Shim) loadNodes(revision int64) (rev int64, err error) {
 		}
 
 		for _, n := range nr.Nodes {
-			s.cache.nodes[n.SpiffeId] = &nodeCacheEntry{node: n}
+			s.cache.nodes[n.SpiffeId] = n
 		}
 	}
 
@@ -218,7 +197,29 @@ func (s *Shim) loadTokens(revision int64) (rev int64, err error) {
 	s.cache.tokenMu.Lock()
 	defer s.cache.tokenMu.Unlock()
 
-	// TODO implement after listJoinTokens
+	tr := &datastore.ListJoinTokensResponse{}
+	rev = revision
+	token := ""
+	for {
+		tr, rev, err = s.listJoinTokens(context.TODO(), rev, &datastore.ListJoinTokensRequest{
+			Pagination: &datastore.Pagination{Token: token, PageSize: loadPageSize}})
+		if err != nil {
+			return 0, err
+		}
+
+		count := len(tr.JoinTokens)
+		token = tr.Pagination.Token
+		s.log.Info(fmt.Sprintf("load tokens count: %d, token: %s, rev: %d", count, token, rev))
+		if token == "" || count == 0 {
+			break
+		}
+
+		for _, t := range tr.JoinTokens {
+			s.cache.tokens[t.Token] = t
+		}
+	}
+
+	s.cache.tStoreRevision = rev
 
 	return
 }

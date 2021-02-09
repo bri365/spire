@@ -129,6 +129,61 @@ func (s *Shim) fetchToken(ctx context.Context,
 	return resp, ver, nil
 }
 
+// listJoinTokens retrieves an optionally paginated list of all join tokens.
+// Store revision is accepted and returned for consistency across paginated calls.
+func (s *Shim) listJoinTokens(ctx context.Context, rev int64,
+	req *datastore.ListJoinTokensRequest) (*datastore.ListJoinTokensResponse, int64, error) {
+
+	if req.Pagination != nil && req.Pagination.PageSize == 0 {
+		return nil, 0, status.Error(codes.InvalidArgument, "cannot paginate with pagesize = 0")
+	}
+
+	// Start with all token identifiers and limit of 0 (no limit)
+	key := tokenKey("")
+	end := allTokens
+	var limit int64
+
+	p := req.Pagination
+	if p != nil {
+		limit = int64(p.PageSize)
+		if len(p.Token) > 0 {
+			// Validate token
+			if len(p.Token) < 3 || p.Token[0:2] != key {
+				return nil, 0, status.Errorf(codes.InvalidArgument, "could not parse token '%s'", p.Token)
+			}
+			// TODO one bit larger than token
+			key = fmt.Sprintf("%s ", p.Token)
+		}
+	}
+
+	res, err := s.Store.Get(ctx, &store.GetRequest{Key: key, End: end, Limit: limit, Revision: rev})
+	if err != nil {
+		return nil, 0, err
+	}
+
+	lastKey := ""
+	resp := &datastore.ListJoinTokensResponse{}
+	for _, kv := range res.Kvs {
+		t := &datastore.JoinToken{}
+		err = proto.Unmarshal(kv.Value, t)
+		if err != nil {
+			return nil, 0, err
+		}
+		resp.JoinTokens = append(resp.JoinTokens, t)
+		lastKey = kv.Key
+	}
+
+	if p != nil {
+		p.Token = ""
+		// Set token only if there may be more tokens than returned
+		if len(resp.JoinTokens) == int(p.PageSize) {
+			p.Token = lastKey
+		}
+		resp.Pagination = p
+	}
+	return resp, res.Revision, nil
+}
+
 // PruneJoinTokens deletes all tokens which have expired before the given time.
 func (s *Shim) PruneJoinTokens(ctx context.Context,
 	req *datastore.PruneJoinTokensRequest) (*datastore.PruneJoinTokensResponse, error) {

@@ -242,6 +242,19 @@ func (st *Plugin) Set(ctx context.Context, req *store.SetRequest) (*store.SetRes
 		// return nil, status.Error(codes.Aborted, fmt.Sprintf("%s %v", res, t.Responses))
 	}
 
+	// Send End of Transaction marker for watchers
+	eot := fmt.Sprintf("%s%d", ss.TxPrefix, t.Header.Revision)
+	lease, err := st.c.Grant(ctx, ss.TxEotTTL)
+	if err != nil {
+		st.log.Error("Failed to acquire lease")
+		return nil, err
+	}
+	_, err = st.c.Put(ctx, eot, "", clientv3.WithLease(lease.ID))
+	if err != nil {
+		st.log.Error("Failed to write end of transaction marker")
+		return nil, err
+	}
+
 	resp := &store.SetResponse{Revision: t.Header.Revision}
 
 	// TODO consider returning responses for the operations

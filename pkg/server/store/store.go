@@ -55,6 +55,7 @@ const (
 	nodeKeyID   = "N"
 	selKeyID    = "S"
 	tokenKeyID  = "T"
+	txKeyID     = "X"
 
 	// Index field identifiers
 	// NOTE: these could theoretically be reflected from protobufs but that
@@ -69,6 +70,7 @@ const (
 	TVI = "TVI" // Type-Value-ID
 )
 
+// Key creation values
 var (
 	storeLoaded = false
 
@@ -76,16 +78,20 @@ var (
 	// a range to get all key values for a given prefix.
 	delend = string(delim[0] + 1)
 
+	// End of transaction marker enables watchers to identify operations in a transaction
+
 	// Key creation and comparison values
 	bundlePrefix = fmt.Sprintf("%s%s", bundleKeyID, delim)
 	entryPrefix  = fmt.Sprintf("%s%s", entryKeyID, delim)
 	nodePrefix   = fmt.Sprintf("%s%s", nodeKeyID, delim)
 	tokenPrefix  = fmt.Sprintf("%s%s", tokenKeyID, delim)
+	TxPrefix     = fmt.Sprintf("%s%s", txKeyID, delim)
 
 	allBundles   = fmt.Sprintf("%s%s", bundleKeyID, delend)
 	allEntries   = fmt.Sprintf("%s%s", entryKeyID, delend)
 	allNodes     = fmt.Sprintf("%s%s", nodeKeyID, delend)
 	allSelectors = fmt.Sprintf("%s%s", selKeyID, delend)
+	allTokens    = fmt.Sprintf("%s%s", tokenKeyID, delend)
 
 	bundleIndex = fmt.Sprintf("%s%s%s", bundleKeyID, indexKeyID, delim)
 	entryIndex  = fmt.Sprintf("%s%s%s", entryKeyID, indexKeyID, delim)
