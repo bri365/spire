@@ -132,10 +132,7 @@ func (st *Plugin) Configure(ctx context.Context, req *spi.ConfigureRequest) (*sp
 	}
 
 	// Set Store level configuration
-	st.Cfg = &ss.Configuration{
-		HeartbeatInterval:  1,
-		WriteResponseDelay: 200,
-	}
+	st.Cfg = &ss.Configuration{}
 
 	if cfg.EnableEotMarkers != nil {
 		st.Cfg.EnableEotMarkers = *cfg.EnableEotMarkers
@@ -315,7 +312,9 @@ func (st *Plugin) openConnection(cfg *configuration, isReadOnly bool) error {
 }
 
 func (st *Plugin) close() {
+	// TODO stop heartbeat
 	if st.Etcd != nil {
+		// TODO close watchers first?
 		st.Etcd.Close()
 	}
 }

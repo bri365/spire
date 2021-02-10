@@ -940,7 +940,7 @@ func (s *Shim) entrySelectorMatch(entry *common.RegistrationEntry, req *datastor
 		}
 		return true
 	} else {
-		s.log.Warn(fmt.Sprintf("Unknown match %v", req.Match))
+		s.Log.Warn(fmt.Sprintf("Unknown match %v", req.Match))
 	}
 	return false
 }

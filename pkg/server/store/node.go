@@ -817,7 +817,7 @@ func (s *Shim) nodeSelectorMatch(node *common.AttestedNode, req *datastore.BySel
 		}
 		return true
 	} else {
-		s.log.Warn(fmt.Sprintf("Unknown match %v", req.Match))
+		s.Log.Warn(fmt.Sprintf("Unknown match %v", req.Match))
 	}
 	return false
 }

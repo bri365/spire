@@ -3,6 +3,8 @@ package store
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -18,8 +20,9 @@ import (
 type Cache struct {
 	datastore.DataStore
 
-	clock clock.Clock
-	log   hclog.Logger
+	clock      clock.Clock
+	log        hclog.Logger
+	hbInterval time.Duration
 
 	bundleMu            sync.Mutex
 	bundleCacheEnabled  bool
@@ -49,11 +52,8 @@ const (
 	// TxEotTtl defines the lifespan of the end of transaction markers in seconds
 	TxEotTTL = 60
 
-	// Heartbeat interval for inter-server timing events
-	storeCacheHeartbeatInterval = time.Second
-
-	// Write response delay to reduce likelihood of cross server cache incoherency
-	storeCacheUpdateDelay = time.Millisecond * 200
+	// Heartbeat message TTL
+	hbTTL = 1
 )
 
 // NewCache returns an initialized cache object.
@@ -90,7 +90,7 @@ func (s *Shim) Initialize() error {
 		if err != nil {
 			return err
 		}
-		go s.watchBundles(rev)
+		go s.watchBundles(rev + 1)
 	}
 
 	if s.cache.entryCacheEnabled {
@@ -98,7 +98,7 @@ func (s *Shim) Initialize() error {
 		if err != nil {
 			return err
 		}
-		go s.watchEntries(rev)
+		go s.watchEntries(rev + 1)
 	}
 
 	if s.cache.nodeCacheEnabled {
@@ -106,7 +106,7 @@ func (s *Shim) Initialize() error {
 		if err != nil {
 			return err
 		}
-		go s.watchNodes(rev)
+		go s.watchNodes(rev + 1)
 	}
 
 	if s.cache.tokenCacheEnabled {
@@ -114,11 +114,13 @@ func (s *Shim) Initialize() error {
 		if err != nil {
 			return err
 		}
-		go s.watchTokens(rev)
+		go s.watchTokens(rev + 1)
 	}
 
-	// Start server heartbeat
-	// TODO
+	// Start server heartbeat routines
+	s.hbStart()
+
+	// TODO handle exit conditions from the five previous routines
 
 	return nil
 }
@@ -146,7 +148,7 @@ func (s *Shim) loadBundles(revision int64) (int64, error) {
 
 		count := len(br.Bundles)
 		token = br.Pagination.Token
-		s.log.Info(fmt.Sprintf("load bundles count: %d, token: %s, rev: %d", count, token, rev))
+		s.Log.Info(fmt.Sprintf("load bundles count: %d, token: %s, rev: %d", count, token, rev))
 		if token == "" || count == 0 {
 			break
 		}
@@ -184,7 +186,7 @@ func (s *Shim) loadEntries(revision int64) (int64, error) {
 
 		count := len(er.Entries)
 		token = er.Pagination.Token
-		s.log.Info(fmt.Sprintf("load entries count: %d, token: %s, rev: %d", count, token, rev))
+		s.Log.Info(fmt.Sprintf("load entries count: %d, token: %s, rev: %d", count, token, rev))
 		if token == "" || count == 0 {
 			break
 		}
@@ -222,7 +224,7 @@ func (s *Shim) loadNodes(revision int64) (int64, error) {
 
 		count := len(nr.Nodes)
 		token = nr.Pagination.Token
-		s.log.Info(fmt.Sprintf("load nodes count: %d, token: %s, rev: %d", count, token, rev))
+		s.Log.Info(fmt.Sprintf("load nodes count: %d, token: %s, rev: %d", count, token, rev))
 		if token == "" || count == 0 {
 			break
 		}
@@ -254,7 +256,7 @@ func (s *Shim) loadTokens(revision int64) (rev int64, err error) {
 
 		count := len(tr.JoinTokens)
 		token = tr.Pagination.Token
-		s.log.Info(fmt.Sprintf("load tokens count: %d, token: %s, rev: %d", count, token, rev))
+		s.Log.Info(fmt.Sprintf("load tokens count: %d, token: %s, rev: %d", count, token, rev))
 		if token == "" || count == 0 {
 			break
 		}
@@ -278,29 +280,29 @@ func (s *Shim) watchBundles(rev int64) error {
 		clientv3.WithProgressNotify(),
 		clientv3.WithRev(rev),
 	}
-	// Using bundleKeyID instead of bundlePrefix will also return all index updates
-	bChan := s.Etcd.Watch(context.Background(), bundlePrefix, opts...)
-	s.log.Info("Watching bundle updates")
+	// Using bundleKeyID instead of bundlePrefix will also return index updates
+	bChan := s.Etcd.Watch(context.TODO(), bundlePrefix, opts...)
+	s.Log.Info(fmt.Sprintf("Watching bundle updates from %d", rev))
 
 	for w := range bChan {
 		if w.Err() != nil {
-			s.log.Error(fmt.Sprintf("bChan error %v", w.Err()))
+			s.Log.Error(fmt.Sprintf("bChan error %v", w.Err()))
 			break
 		}
 
 		if w.IsProgressNotify() {
-			s.log.Info("No bundle updates for 10 minutes")
+			s.Log.Info("No bundle updates for 10 minutes")
 			continue
 		}
 
 		for _, e := range w.Events {
-			s.log.Info(fmt.Sprintf("%s %s at version %d at revision %d",
+			s.Log.Info(fmt.Sprintf("%s %s at version %d at revision %d",
 				e.Type, e.Kv.Key, e.Kv.Version, e.Kv.ModRevision))
 
 			bundle := &common.Bundle{}
 			err := proto.Unmarshal(e.Kv.Value, bundle)
 			if err != nil {
-				s.log.Error(fmt.Sprintf("%v on %v", err, e.Kv.Value))
+				s.Log.Error(fmt.Sprintf("%v on %v", err, e.Kv.Value))
 			}
 
 			s.cache.bundleMu.Lock()
@@ -323,29 +325,29 @@ func (s *Shim) watchEntries(rev int64) error {
 		clientv3.WithProgressNotify(),
 		clientv3.WithRev(rev),
 	}
-	// Using entryKeyID instead of entryPrefix will also return all index updates
-	eChan := s.Etcd.Watch(context.Background(), entryPrefix, opts...)
-	s.log.Info("Watching entry updates")
+	// Using entryKeyID instead of entryPrefix will also return index updates
+	eChan := s.Etcd.Watch(context.TODO(), entryPrefix, opts...)
+	s.Log.Info(fmt.Sprintf("Watching entry updates from %d", rev))
 
 	for w := range eChan {
 		if w.Err() != nil {
-			s.log.Error(fmt.Sprintf("eChan error %v", w.Err()))
+			s.Log.Error(fmt.Sprintf("eChan error %v", w.Err()))
 			break
 		}
 
 		if w.IsProgressNotify() {
-			s.log.Info("No entry updates for 10 minutes")
+			s.Log.Info("No entry updates for 10 minutes")
 			continue
 		}
 
 		for _, e := range w.Events {
-			s.log.Info(fmt.Sprintf("%s %s at version %d at revision %d",
+			s.Log.Info(fmt.Sprintf("%s %s at version %d at revision %d",
 				e.Type, e.Kv.Key, e.Kv.Version, e.Kv.ModRevision))
 
 			entry := &common.RegistrationEntry{}
 			err := proto.Unmarshal(e.Kv.Value, entry)
 			if err != nil {
-				s.log.Error(fmt.Sprintf("%v on %v", err, e.Kv.Value))
+				s.Log.Error(fmt.Sprintf("%v on %v", err, e.Kv.Value))
 			}
 
 			s.cache.entryMu.Lock()
@@ -368,29 +370,29 @@ func (s *Shim) watchNodes(rev int64) error {
 		clientv3.WithProgressNotify(),
 		clientv3.WithRev(rev),
 	}
-	// Using nodeKeyID instead of nodePrefix will also return all index updates
-	nChan := s.Etcd.Watch(context.Background(), nodePrefix, opts...)
-	s.log.Info("Watching node updates")
+	// Using nodeKeyID instead of nodePrefix will also return index updates
+	nChan := s.Etcd.Watch(context.TODO(), nodePrefix, opts...)
+	s.Log.Info(fmt.Sprintf("Watching node updates from %d", rev))
 
 	for w := range nChan {
 		if w.Err() != nil {
-			s.log.Error(fmt.Sprintf("nChan error %v", w.Err()))
+			s.Log.Error(fmt.Sprintf("nChan error %v", w.Err()))
 			break
 		}
 
 		if w.IsProgressNotify() {
-			s.log.Info("No node updates for 10 minutes")
+			s.Log.Info("No node updates for 10 minutes")
 			continue
 		}
 
 		for _, e := range w.Events {
-			s.log.Info(fmt.Sprintf("%s %s at version %d at revision %d",
+			s.Log.Info(fmt.Sprintf("%s %s at version %d at revision %d",
 				e.Type, e.Kv.Key, e.Kv.Version, e.Kv.ModRevision))
 
 			node := &common.AttestedNode{}
 			err := proto.Unmarshal(e.Kv.Value, node)
 			if err != nil {
-				s.log.Error(fmt.Sprintf("%v on %v", err, e.Kv.Value))
+				s.Log.Error(fmt.Sprintf("%v on %v", err, e.Kv.Value))
 			}
 
 			s.cache.nodeMu.Lock()
@@ -413,29 +415,29 @@ func (s *Shim) watchTokens(rev int64) error {
 		clientv3.WithProgressNotify(),
 		clientv3.WithRev(rev),
 	}
-	// Using tokenKeyID instead of tokenPrefix will also return all index updates
-	tChan := s.Etcd.Watch(context.Background(), tokenPrefix, opts...)
-	s.log.Info("Watching join token updates")
+	// Using tokenKeyID instead of tokenPrefix will also return index updates
+	tChan := s.Etcd.Watch(context.TODO(), tokenPrefix, opts...)
+	s.Log.Info(fmt.Sprintf("Watching token updates from %d", rev))
 
 	for w := range tChan {
 		if w.Err() != nil {
-			s.log.Error(fmt.Sprintf("tChan error %v", w.Err()))
+			s.Log.Error(fmt.Sprintf("tChan error %v", w.Err()))
 			break
 		}
 
 		if w.IsProgressNotify() {
-			s.log.Info("No join token updates for 10 minutes")
+			s.Log.Info("No join token updates for 10 minutes")
 			continue
 		}
 
 		for _, e := range w.Events {
-			s.log.Info(fmt.Sprintf("%s %s at version %d at revision %d",
+			s.Log.Info(fmt.Sprintf("%s %s at version %d at revision %d",
 				e.Type, e.Kv.Key, e.Kv.Version, e.Kv.ModRevision))
 
 			token := &datastore.JoinToken{}
 			err := proto.Unmarshal(e.Kv.Value, token)
 			if err != nil {
-				s.log.Error(fmt.Sprintf("%v on %v", err, e.Kv.Value))
+				s.Log.Error(fmt.Sprintf("%v on %v", err, e.Kv.Value))
 			}
 
 			s.cache.tokenMu.Lock()
@@ -447,4 +449,121 @@ func (s *Shim) watchTokens(rev int64) error {
 	// TODO restart at last successfully updated store revision
 
 	return nil
+}
+
+// Initialize heartbeat monitoring
+func (s *Shim) hbStart() {
+	// Secure a unique store revision with an empty heartbeat
+	ctx := context.TODO()
+	rev, err := s.sendHB(ctx, "", "", 1)
+	if err != nil {
+		s.Log.Error(fmt.Sprintf("Error getting heartbeat ID %v", err))
+		return
+	}
+
+	if s.cache.hbInterval == 0 {
+		s.Log.Info("Heartbeat disabled")
+		return
+	}
+
+	s.Log.Info(fmt.Sprintf("Starting heartbeat with id %d", rev))
+	go s.hbReply(context.TODO(), rev+1)
+	go s.hbSend(rev + 1)
+}
+
+// Send periodic heartbeat messages
+func (s *Shim) hbSend(rev int64) {
+	id := fmt.Sprintf("%d", rev)
+	// Loop every interval forever
+	ticker := s.cache.clock.Ticker(s.cache.hbInterval)
+	for t := range ticker.C {
+		s.Log.Info(fmt.Sprintf("Sending heartbeat %q at %d", id, t.UnixNano()))
+		s.sendHB(context.TODO(), id, "", t.UnixNano())
+	}
+}
+
+// Reply to heartbeat messages from other servers.
+func (s *Shim) hbReply(ctx context.Context, rev int64) {
+	// Watch heartbeat records created after we initialized
+	opts := []clientv3.OpOption{
+		clientv3.WithPrefix(),
+		clientv3.WithProgressNotify(),
+		clientv3.WithRev(rev),
+	}
+	hChan := s.Etcd.Watch(context.Background(), heartbeatPrefix, opts...)
+
+	id := fmt.Sprintf("%d", rev)
+	for w := range hChan {
+		if w.Err() != nil {
+			s.Log.Error(fmt.Sprintf("Heartbeat channel error %v", w.Err()))
+			return
+		}
+
+		if w.IsProgressNotify() {
+			s.Log.Error("No heartbeats for 10 minutes")
+		}
+
+		for _, e := range w.Events {
+			if e.Type == 1 {
+				// Ignore delete operations
+				continue
+			}
+			originator, responder, ts := s.parseHB(e)
+			delta := float64(s.cache.clock.Now().UnixNano()-ts) / 1000000.0
+			if originator == id {
+				if responder == "" {
+					s.Log.Info(fmt.Sprintf("self heartbeat in %.2fms", delta))
+				} else {
+					s.Log.Info(fmt.Sprintf("reply heartbeat from %s in %.2fms", responder, delta))
+				}
+			} else if originator != "" && responder == "" {
+				// reply to foreign heartbeat
+				s.Log.Info(fmt.Sprintf("reply to %s", originator))
+				_, err := s.sendHB(ctx, originator, id, ts)
+				if err != nil {
+					s.Log.Error(fmt.Sprintf("Error sending heartbeat reply to %s %v", originator, err))
+				}
+			}
+		}
+	}
+}
+
+// Send a heartbeat and return the store revision.
+// Heartbeats are formatted as "H|<originator>|<responder>"
+func (s *Shim) sendHB(ctx context.Context, orig, resp string, ts int64) (int64, error) {
+	lease, err := s.Etcd.Grant(ctx, hbTTL)
+	if err != nil {
+		s.Log.Error("Failed to acquire heartbeat lease")
+		return 0, err
+	}
+
+	key := fmt.Sprintf("%s%s%s%s", heartbeatPrefix, orig, delim, resp)
+	value := fmt.Sprintf("%d", ts)
+	res, err := s.Etcd.Put(ctx, key, value, clientv3.WithLease(lease.ID))
+	if err != nil {
+		return 0, err
+	}
+
+	return res.Header.Revision, nil
+}
+
+// Parse a heartbeat and return the originator and responder ID strings and the timestamp
+func (s *Shim) parseHB(hb *clientv3.Event) (string, string, int64) {
+	ts, err := strconv.ParseInt(string(hb.Kv.Value), 10, 64)
+	if err != nil {
+		s.Log.Error(fmt.Sprintf("Invalid heartbeat payload %q %v", string(hb.Kv.Value), hb))
+		return "", "", 0
+	}
+	items := strings.Split(string(hb.Kv.Key), delim)
+	if len(items) == 2 {
+		return items[1], "", ts
+	}
+
+	if len(items) == 3 {
+		return items[1], items[2], ts
+	}
+
+	s.Log.Error(fmt.Sprintf("Invalid heartbeat %q", string(hb.Kv.Key)))
+
+	return "", "", 0
 }

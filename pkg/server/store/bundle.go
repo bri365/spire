@@ -323,7 +323,7 @@ func (s *Shim) PruneBundle(ctx context.Context,
 	}
 
 	// Prune
-	newBundle, changed, err := bundleutil.PruneBundle(fr.Bundle, time.Unix(req.ExpiresBefore, 0), s.log)
+	newBundle, changed, err := bundleutil.PruneBundle(fr.Bundle, time.Unix(req.ExpiresBefore, 0), s.Log)
 	if err != nil {
 		return nil, fmt.Errorf("prune failed: %v", err)
 	}

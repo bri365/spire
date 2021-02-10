@@ -13,6 +13,7 @@ package store
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/andres-erbsen/clock"
 	"github.com/hashicorp/go-hclog"
@@ -30,9 +31,10 @@ type Shim struct {
 	// TODO - hack to workaround catalog non-plugin client/server issues
 	Etcd *clientv3.Client
 
+	Log hclog.Logger
+
 	cache Cache
 	cfg   *Configuration
-	log   hclog.Logger
 }
 
 // Configuration represents store wide config, supplied by the plugin
@@ -58,14 +60,13 @@ const (
 
 	bundleKeyID = "B"
 	entryKeyID  = "E"
+	heartbeatID = "H"
 	nodeKeyID   = "N"
 	selKeyID    = "S"
 	tokenKeyID  = "T"
 	txKeyID     = "X"
 
 	// Index field identifiers
-	// NOTE: these could theoretically be reflected from protobufs but that
-	// feels like overkill and would be less readable for debugging.
 	ADT = "ADT" // AttestationDataType
 	CNA = "CNA" // CertNotAfter
 	BAN = "BAN" // Banned
@@ -87,11 +88,12 @@ var (
 	// End of transaction marker enables watchers to identify operations in a transaction
 
 	// Key creation and comparison values
-	bundlePrefix = fmt.Sprintf("%s%s", bundleKeyID, delim)
-	entryPrefix  = fmt.Sprintf("%s%s", entryKeyID, delim)
-	nodePrefix   = fmt.Sprintf("%s%s", nodeKeyID, delim)
-	tokenPrefix  = fmt.Sprintf("%s%s", tokenKeyID, delim)
-	TxPrefix     = fmt.Sprintf("%s%s", txKeyID, delim)
+	bundlePrefix    = fmt.Sprintf("%s%s", bundleKeyID, delim)
+	entryPrefix     = fmt.Sprintf("%s%s", entryKeyID, delim)
+	heartbeatPrefix = fmt.Sprintf("%s%s", heartbeatID, delim)
+	nodePrefix      = fmt.Sprintf("%s%s", nodeKeyID, delim)
+	tokenPrefix     = fmt.Sprintf("%s%s", tokenKeyID, delim)
+	TxPrefix        = fmt.Sprintf("%s%s", txKeyID, delim)
 
 	allBundles   = fmt.Sprintf("%s%s", bundleKeyID, delend)
 	allEntries   = fmt.Sprintf("%s%s", entryKeyID, delend)
@@ -111,12 +113,18 @@ var (
 // New returns an initialized store.
 func New(ds datastore.DataStore, st store.Store, logger hclog.Logger,
 	cfg *Configuration, etcd *clientv3.Client) (*Shim, error) {
-	store := &Shim{DataStore: ds, Store: st, log: logger}
-	store.cache = NewCache(cfg, clock.New(), logger)
+	store := &Shim{DataStore: ds, Store: st, Log: logger}
 	store.cfg = cfg
+	store.cache = NewCache(cfg, clock.New(), logger)
+	store.cache.hbInterval = time.Duration(cfg.HeartbeatInterval) * time.Second
 	store.Etcd = etcd
 	if err := store.Initialize(); err != nil {
 		return nil, err
 	}
 	return store, nil
+}
+
+// Close shuts down the heartbeat and watcher channels.
+func (s *Shim) Close() {
+	// Close heartbeat and watchers
 }

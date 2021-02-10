@@ -724,7 +724,6 @@ func (s *PluginSuite) TestUpdateAttestedNode() {
 	for _, test := range tests {
 		test := test
 		s.T().Run(test.name, func(t *testing.T) {
-			s.T().Log(test.name)
 			node := &common.AttestedNode{
 				SpiffeId:            nodeID,
 				AttestationDataType: attestationType,
