@@ -26,6 +26,9 @@ type StoreClient interface {
 	Get(ctx context.Context, in *GetRequest, opts ...grpc.CallOption) (*GetResponse, error)
 	// Set one or more items (create, delete, update, and set/upsert) in the store as a single transaction.
 	Set(ctx context.Context, in *SetRequest, opts ...grpc.CallOption) (*SetResponse, error)
+	// Watch returns a stream of store updates to keep caches current
+	// TODO sort out builtin catalog non-plugin client and server pieces so this can stream
+	Watch(ctx context.Context, in *WatchRequest, opts ...grpc.CallOption) (*WatchResponse, error)
 }
 
 type storeClient struct {
@@ -72,6 +75,15 @@ func (c *storeClient) Set(ctx context.Context, in *SetRequest, opts ...grpc.Call
 	return out, nil
 }
 
+func (c *storeClient) Watch(ctx context.Context, in *WatchRequest, opts ...grpc.CallOption) (*WatchResponse, error) {
+	out := new(WatchResponse)
+	err := c.cc.Invoke(ctx, "/spire.server.store.Store/Watch", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // StoreServer is the server API for Store service.
 // All implementations must embed UnimplementedStoreServer
 // for forward compatibility
@@ -84,6 +96,9 @@ type StoreServer interface {
 	Get(context.Context, *GetRequest) (*GetResponse, error)
 	// Set one or more items (create, delete, update, and set/upsert) in the store as a single transaction.
 	Set(context.Context, *SetRequest) (*SetResponse, error)
+	// Watch returns a stream of store updates to keep caches current
+	// TODO sort out builtin catalog non-plugin client and server pieces so this can stream
+	Watch(context.Context, *WatchRequest) (*WatchResponse, error)
 	mustEmbedUnimplementedStoreServer()
 }
 
@@ -102,6 +117,9 @@ func (UnimplementedStoreServer) Get(context.Context, *GetRequest) (*GetResponse,
 }
 func (UnimplementedStoreServer) Set(context.Context, *SetRequest) (*SetResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Set not implemented")
+}
+func (UnimplementedStoreServer) Watch(context.Context, *WatchRequest) (*WatchResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Watch not implemented")
 }
 func (UnimplementedStoreServer) mustEmbedUnimplementedStoreServer() {}
 
@@ -188,6 +206,24 @@ func _Store_Set_Handler(srv interface{}, ctx context.Context, dec func(interface
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Store_Watch_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(WatchRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StoreServer).Watch(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/spire.server.store.Store/Watch",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StoreServer).Watch(ctx, req.(*WatchRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 var _Store_serviceDesc = grpc.ServiceDesc{
 	ServiceName: "spire.server.store.Store",
 	HandlerType: (*StoreServer)(nil),
@@ -207,6 +243,10 @@ var _Store_serviceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Set",
 			Handler:    _Store_Set_Handler,
+		},
+		{
+			MethodName: "Watch",
+			Handler:    _Store_Watch_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

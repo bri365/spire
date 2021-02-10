@@ -7,7 +7,9 @@ import (
 	"time"
 
 	"github.com/andres-erbsen/clock"
+	"github.com/golang/protobuf/proto"
 	"github.com/hashicorp/go-hclog"
+	"github.com/roguesoftware/etcd/clientv3"
 	"github.com/spiffe/spire/pkg/server/plugin/datastore"
 	"github.com/spiffe/spire/proto/spire/common"
 )
@@ -19,22 +21,25 @@ type Cache struct {
 	clock clock.Clock
 	log   hclog.Logger
 
-	// Bundle and Registration Entry acess is protected together for federation
-	brCacheEnabled  bool
-	brStoreRevision int64
-	bundleRegMu     sync.Mutex
-	bundles         map[string]*common.Bundle
-	registrations   map[string]*common.RegistrationEntry
+	bundleMu            sync.Mutex
+	bundleCacheEnabled  bool
+	bundleStoreRevision int64
+	bundles             map[string]*common.Bundle
 
-	nodeCacheEnabled bool
-	nStoreRevision   int64
-	nodeMu           sync.Mutex
-	nodes            map[string]*common.AttestedNode
+	entryMu            sync.Mutex
+	entryCacheEnabled  bool
+	entryStoreRevision int64
+	entries            map[string]*common.RegistrationEntry
 
-	tokenCacheEnabled bool
-	tStoreRevision    int64
-	tokenMu           sync.Mutex
-	tokens            map[string]*datastore.JoinToken
+	nodeMu            sync.Mutex
+	nodeCacheEnabled  bool
+	nodeStoreRevision int64
+	nodes             map[string]*common.AttestedNode
+
+	tokenMu            sync.Mutex
+	tokenCacheEnabled  bool
+	tokenStoreRevision int64
+	tokens             map[string]*datastore.JoinToken
 }
 
 // Store cache constants
@@ -57,14 +62,15 @@ func NewCache(cfg *Configuration, clock clock.Clock, logger hclog.Logger) Cache 
 		clock: clock,
 		log:   logger,
 
-		bundles:       map[string]*common.Bundle{},
-		registrations: map[string]*common.RegistrationEntry{},
-		nodes:         map[string]*common.AttestedNode{},
-		tokens:        map[string]*datastore.JoinToken{},
+		bundles: map[string]*common.Bundle{},
+		entries: map[string]*common.RegistrationEntry{},
+		nodes:   map[string]*common.AttestedNode{},
+		tokens:  map[string]*datastore.JoinToken{},
 
-		brCacheEnabled:    !cfg.DisableBundleRegCache,
-		nodeCacheEnabled:  !cfg.DisableNodeCache,
-		tokenCacheEnabled: !cfg.DisableTokenCache,
+		bundleCacheEnabled: !cfg.DisableBundleCache,
+		entryCacheEnabled:  !cfg.DisableEntryCache,
+		nodeCacheEnabled:   !cfg.DisableNodeCache,
+		tokenCacheEnabled:  !cfg.DisableTokenCache,
 	}
 }
 
@@ -75,16 +81,24 @@ func NewCache(cfg *Configuration, clock clock.Clock, logger hclog.Logger) Cache 
 // NOTE: for faster startup, we could start a go routine to load
 // and validate the cache data.
 func (s *Shim) Initialize() error {
-	// Start with the latest revision (rev = 0)
+	// Start with the latest store revision (rev = 0)
 	var rev int64
 	var err error
 
-	if s.cache.brCacheEnabled {
-		rev, err = s.loadBundlesAndRegistrations(rev)
+	if s.cache.bundleCacheEnabled {
+		rev, err = s.loadBundles(rev)
 		if err != nil {
 			return err
 		}
-		go s.watchBundlesAndRegistrations()
+		go s.watchBundles(rev)
+	}
+
+	if s.cache.entryCacheEnabled {
+		rev, err = s.loadEntries(rev)
+		if err != nil {
+			return err
+		}
+		go s.watchEntries(rev)
 	}
 
 	if s.cache.nodeCacheEnabled {
@@ -92,7 +106,7 @@ func (s *Shim) Initialize() error {
 		if err != nil {
 			return err
 		}
-		go s.watchNodes()
+		go s.watchNodes(rev)
 	}
 
 	if s.cache.tokenCacheEnabled {
@@ -100,7 +114,7 @@ func (s *Shim) Initialize() error {
 		if err != nil {
 			return err
 		}
-		go s.watchTokens()
+		go s.watchTokens(rev)
 	}
 
 	// Start server heartbeat
@@ -109,20 +123,25 @@ func (s *Shim) Initialize() error {
 	return nil
 }
 
-// loadBundlesAndRegistrations performs the initial cache load for
-// bundles and registration entries under the same lock.
-func (s *Shim) loadBundlesAndRegistrations(revision int64) (rev int64, err error) {
-	s.cache.bundleRegMu.Lock()
-	defer s.cache.bundleRegMu.Unlock()
+// loadBundles performs the initial cache load for bundles
+func (s *Shim) loadBundles(revision int64) (int64, error) {
+	s.cache.bundleMu.Lock()
+	defer s.cache.bundleMu.Unlock()
 
-	br := &datastore.ListBundlesResponse{}
-	rev = revision
+	rev := revision
 	token := ""
 	for {
-		br, rev, err = s.listBundles(context.TODO(), rev, &datastore.ListBundlesRequest{
+		br, r, err := s.listBundles(context.TODO(), rev, &datastore.ListBundlesRequest{
 			Pagination: &datastore.Pagination{Token: token, PageSize: loadPageSize}})
 		if err != nil {
 			return 0, err
+		}
+		if rev == 0 {
+			// First read returns the current store revision if requested revision is 0
+			rev = r
+		} else if r != rev {
+			// Requested store version was honored - something wrong with etcd
+			return 0, fmt.Errorf("Revision returned (%d) does not match requested (%d)", r, rev)
 		}
 
 		count := len(br.Bundles)
@@ -137,13 +156,30 @@ func (s *Shim) loadBundlesAndRegistrations(revision int64) (rev int64, err error
 		}
 	}
 
-	er := &datastore.ListRegistrationEntriesResponse{}
-	token = ""
+	s.cache.bundleStoreRevision = rev
+
+	return rev, nil
+}
+
+// loadEntries performs the initial cache load for registration entries
+func (s *Shim) loadEntries(revision int64) (int64, error) {
+	s.cache.entryMu.Lock()
+	defer s.cache.entryMu.Unlock()
+
+	rev := revision
+	token := ""
 	for {
-		er, rev, err = s.listRegistrationEntries(context.TODO(), rev, &datastore.ListRegistrationEntriesRequest{
+		er, r, err := s.listRegistrationEntries(context.TODO(), rev, &datastore.ListRegistrationEntriesRequest{
 			Pagination: &datastore.Pagination{Token: token, PageSize: loadPageSize}})
 		if err != nil {
 			return 0, err
+		}
+		if rev == 0 {
+			// First read returns the current store revision if requested revision is 0
+			rev = r
+		} else if r != rev {
+			// Requested store version was honored - something wrong with etcd
+			return 0, fmt.Errorf("Revision returned (%d) does not match requested (%d)", r, rev)
 		}
 
 		count := len(er.Entries)
@@ -154,28 +190,34 @@ func (s *Shim) loadBundlesAndRegistrations(revision int64) (rev int64, err error
 		}
 
 		for _, e := range er.Entries {
-			s.cache.registrations[e.EntryId] = e
+			s.cache.entries[e.EntryId] = e
 		}
 	}
 
-	s.cache.brStoreRevision = rev
+	s.cache.entryStoreRevision = rev
 
-	return
+	return rev, nil
 }
 
 // loadNodes performs the initial cache load for attested nodes.
-func (s *Shim) loadNodes(revision int64) (rev int64, err error) {
+func (s *Shim) loadNodes(revision int64) (int64, error) {
 	s.cache.nodeMu.Lock()
 	defer s.cache.nodeMu.Unlock()
 
-	nr := &datastore.ListAttestedNodesResponse{}
-	rev = revision
+	rev := revision
 	token := ""
 	for {
-		nr, rev, err = s.listAttestedNodes(context.TODO(), rev, &datastore.ListAttestedNodesRequest{
+		nr, r, err := s.listAttestedNodes(context.TODO(), rev, &datastore.ListAttestedNodesRequest{
 			Pagination: &datastore.Pagination{Token: token, PageSize: loadPageSize}})
 		if err != nil {
 			return 0, err
+		}
+		if rev == 0 {
+			// First read returns the current store revision if requested revision is 0
+			rev = r
+		} else if r != rev {
+			// Requested store version was honored - something wrong with etcd
+			return 0, fmt.Errorf("Revision returned (%d) does not match requested (%d)", r, rev)
 		}
 
 		count := len(nr.Nodes)
@@ -190,9 +232,9 @@ func (s *Shim) loadNodes(revision int64) (rev int64, err error) {
 		}
 	}
 
-	s.cache.nStoreRevision = rev
+	s.cache.nodeStoreRevision = rev
 
-	return
+	return rev, nil
 }
 
 // loadTokens performs the initial cache load for join tokens.
@@ -222,26 +264,187 @@ func (s *Shim) loadTokens(revision int64) (rev int64, err error) {
 		}
 	}
 
-	s.cache.tStoreRevision = rev
+	s.cache.tokenStoreRevision = rev
 
 	return
 }
 
 // watchBundlesAndRegistrations receives a stream of updates (deletes or puts)
-// for bundles and registration entries, starting at the given store revision.
-func (s *Shim) watchBundlesAndRegistrations() error {
-	// err := etcd.Watch(&store.WatchRequest{})
+// for bundles, starting at the given store revision.
+// Note: this is called as a goroutine and only returns on an error
+func (s *Shim) watchBundles(rev int64) error {
+	opts := []clientv3.OpOption{
+		clientv3.WithPrefix(),
+		clientv3.WithProgressNotify(),
+		clientv3.WithRev(rev),
+	}
+	// Using bundleKeyID instead of bundlePrefix will also return all index updates
+	bChan := s.Etcd.Watch(context.Background(), bundlePrefix, opts...)
+	s.log.Info("Watching bundle updates")
+
+	for w := range bChan {
+		if w.Err() != nil {
+			s.log.Error(fmt.Sprintf("bChan error %v", w.Err()))
+			break
+		}
+
+		if w.IsProgressNotify() {
+			s.log.Info("No bundle updates for 10 minutes")
+			continue
+		}
+
+		for _, e := range w.Events {
+			s.log.Info(fmt.Sprintf("%s %s at version %d at revision %d",
+				e.Type, e.Kv.Key, e.Kv.Version, e.Kv.ModRevision))
+
+			bundle := &common.Bundle{}
+			err := proto.Unmarshal(e.Kv.Value, bundle)
+			if err != nil {
+				s.log.Error(fmt.Sprintf("%v on %v", err, e.Kv.Value))
+			}
+
+			s.cache.bundleMu.Lock()
+			s.cache.bundles[bundle.TrustDomainId] = bundle
+			s.cache.bundleMu.Unlock()
+		}
+	}
+
+	// TODO restart at last successfully updated store revision
+
+	return nil
+}
+
+// watchEntries receives a stream of updates (deletes or puts)
+// for registration entries, starting at the given store revision.
+// Note: this is called as a goroutine and only returns on an error
+func (s *Shim) watchEntries(rev int64) error {
+	opts := []clientv3.OpOption{
+		clientv3.WithPrefix(),
+		clientv3.WithProgressNotify(),
+		clientv3.WithRev(rev),
+	}
+	// Using entryKeyID instead of entryPrefix will also return all index updates
+	eChan := s.Etcd.Watch(context.Background(), entryPrefix, opts...)
+	s.log.Info("Watching entry updates")
+
+	for w := range eChan {
+		if w.Err() != nil {
+			s.log.Error(fmt.Sprintf("eChan error %v", w.Err()))
+			break
+		}
+
+		if w.IsProgressNotify() {
+			s.log.Info("No entry updates for 10 minutes")
+			continue
+		}
+
+		for _, e := range w.Events {
+			s.log.Info(fmt.Sprintf("%s %s at version %d at revision %d",
+				e.Type, e.Kv.Key, e.Kv.Version, e.Kv.ModRevision))
+
+			entry := &common.RegistrationEntry{}
+			err := proto.Unmarshal(e.Kv.Value, entry)
+			if err != nil {
+				s.log.Error(fmt.Sprintf("%v on %v", err, e.Kv.Value))
+			}
+
+			s.cache.entryMu.Lock()
+			s.cache.entries[entry.EntryId] = entry
+			s.cache.entryMu.Unlock()
+		}
+	}
+
+	// TODO restart at last successfully updated store revision
+
 	return nil
 }
 
 // watchNodes receives a stream of updates (deletes or puts)
 // for attested nodes, starting at the given store revision.
-func (s *Shim) watchNodes() error {
+// Note: this is called as a goroutine and only returns on an error
+func (s *Shim) watchNodes(rev int64) error {
+	opts := []clientv3.OpOption{
+		clientv3.WithPrefix(),
+		clientv3.WithProgressNotify(),
+		clientv3.WithRev(rev),
+	}
+	// Using nodeKeyID instead of nodePrefix will also return all index updates
+	nChan := s.Etcd.Watch(context.Background(), nodePrefix, opts...)
+	s.log.Info("Watching node updates")
+
+	for w := range nChan {
+		if w.Err() != nil {
+			s.log.Error(fmt.Sprintf("nChan error %v", w.Err()))
+			break
+		}
+
+		if w.IsProgressNotify() {
+			s.log.Info("No node updates for 10 minutes")
+			continue
+		}
+
+		for _, e := range w.Events {
+			s.log.Info(fmt.Sprintf("%s %s at version %d at revision %d",
+				e.Type, e.Kv.Key, e.Kv.Version, e.Kv.ModRevision))
+
+			node := &common.AttestedNode{}
+			err := proto.Unmarshal(e.Kv.Value, node)
+			if err != nil {
+				s.log.Error(fmt.Sprintf("%v on %v", err, e.Kv.Value))
+			}
+
+			s.cache.nodeMu.Lock()
+			s.cache.nodes[node.SpiffeId] = node
+			s.cache.nodeMu.Unlock()
+		}
+	}
+
+	// TODO restart at last successfully updated store revision
+
 	return nil
 }
 
 // watchTokens receives a stream of updates (deletes or puts)
 // for join tokens, starting at the given store revision.
-func (s *Shim) watchTokens() error {
+// Note: this is called as a goroutine and only returns on an error
+func (s *Shim) watchTokens(rev int64) error {
+	opts := []clientv3.OpOption{
+		clientv3.WithPrefix(),
+		clientv3.WithProgressNotify(),
+		clientv3.WithRev(rev),
+	}
+	// Using tokenKeyID instead of tokenPrefix will also return all index updates
+	tChan := s.Etcd.Watch(context.Background(), tokenPrefix, opts...)
+	s.log.Info("Watching join token updates")
+
+	for w := range tChan {
+		if w.Err() != nil {
+			s.log.Error(fmt.Sprintf("tChan error %v", w.Err()))
+			break
+		}
+
+		if w.IsProgressNotify() {
+			s.log.Info("No join token updates for 10 minutes")
+			continue
+		}
+
+		for _, e := range w.Events {
+			s.log.Info(fmt.Sprintf("%s %s at version %d at revision %d",
+				e.Type, e.Kv.Key, e.Kv.Version, e.Kv.ModRevision))
+
+			token := &datastore.JoinToken{}
+			err := proto.Unmarshal(e.Kv.Value, token)
+			if err != nil {
+				s.log.Error(fmt.Sprintf("%v on %v", err, e.Kv.Value))
+			}
+
+			s.cache.tokenMu.Lock()
+			s.cache.tokens[token.Token] = token
+			s.cache.tokenMu.Unlock()
+		}
+	}
+
+	// TODO restart at last successfully updated store revision
+
 	return nil
 }

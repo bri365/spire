@@ -44,16 +44,18 @@ var (
 
 	dialTimeout    = 5 * time.Second
 	requestTimeout = 10 * time.Second
+
+	enableEotMarkers = false
 )
 
 // Plugin is a Store plugin implemented via etcd
 type Plugin struct {
 	store.UnsafeStoreServer
 
-	Cfg *ss.Configuration
-	c   *clientv3.Client
-	mu  sync.Mutex
-	log hclog.Logger
+	Cfg  *ss.Configuration
+	Etcd *clientv3.Client
+	mu   sync.Mutex
+	log  hclog.Logger
 }
 
 // New creates a new etcd plugin struct
@@ -73,12 +75,19 @@ func builtin(p *Plugin) catalog.Plugin {
 // Configuration for the datastore
 // Pointers allow distinction between "unset" and "zero" values
 type configuration struct {
-	Endpoints      []string `hcl:"endpoints" json:"endpoints"`
-	RootCAPath     string   `hcl:"root_ca_path" json:"root_ca_path"`
-	ClientCertPath string   `hcl:"client_cert_path" json:"client_cert_path"`
-	ClientKeyPath  string   `hcl:"client_key_path" json:"client_key_path"`
-	DialTimeout    *int     `hcl:"dial_timeout" json:"dial_timeout"`
-	RequestTimeout *int     `hcl:"request_timeout" json:"request_timeout"`
+	Endpoints          []string `hcl:"endpoints" json:"endpoints"`
+	RootCAPath         string   `hcl:"root_ca_path" json:"root_ca_path"`
+	ClientCertPath     string   `hcl:"client_cert_path" json:"client_cert_path"`
+	ClientKeyPath      string   `hcl:"client_key_path" json:"client_key_path"`
+	DialTimeout        *int     `hcl:"dial_timeout" json:"dial_timeout"`
+	RequestTimeout     *int     `hcl:"request_timeout" json:"request_timeout"`
+	DisableBundleCache *bool    `hcl:"disable_bundle_cache" json:"disable_bundle_cache"`
+	DisableEntryCache  *bool    `hcl:"disable_entry_cache" json:"disable_entry_cache"`
+	DisableNodeCache   *bool    `hcl:"disable_node_cache" json:"disable_node_cache"`
+	DisableTokenCache  *bool    `hcl:"disable_token_cache" json:"disable_token_cache"`
+	EnableEotMarkers   *bool    `hcl:"enable_eot_markers" json:"enable_eot_markers"`
+	HeartbeatInterval  *int     `hcl:"heartbeat_interval" json:"heartbeat_interval"`
+	WriteResponseDelay *int     `hcl:"write_response_delay" json:"write_response_delay"`
 
 	// Undocumented flags
 	LogOps bool `hcl:"log_ops" json:"log_ops"`
@@ -124,11 +133,17 @@ func (st *Plugin) Configure(ctx context.Context, req *spi.ConfigureRequest) (*sp
 
 	// Set Store level configuration
 	st.Cfg = &ss.Configuration{
-		DisableBundleRegCache: false,
-		DisableNodeCache:      false,
-		DisableTokenCache:     false,
-		HeartbeatInterval:     1,
-		WriteResponseDelay:    200,
+		HeartbeatInterval:  1,
+		WriteResponseDelay: 200,
+	}
+
+	if cfg.EnableEotMarkers != nil {
+		st.Cfg.EnableEotMarkers = *cfg.EnableEotMarkers
+		enableEotMarkers = *cfg.EnableEotMarkers
+	}
+
+	if cfg.HeartbeatInterval != nil {
+		st.Cfg.HeartbeatInterval = *cfg.HeartbeatInterval
 	}
 
 	// TODO set proper logging
@@ -149,13 +164,14 @@ func (st *Plugin) Get(ctx context.Context, req *store.GetRequest) (*store.GetRes
 	opts := []clientv3.OpOption{}
 	if req.End != "" {
 		opts = append(opts, clientv3.WithRange(req.End))
+		opts = append(opts, clientv3.WithSort(clientv3.SortByKey, clientv3.SortAscend))
 	}
 
 	if req.Limit != 0 {
 		opts = append(opts, clientv3.WithLimit(req.Limit))
 	}
 
-	res, err := st.c.Get(ctx, req.Key, opts...)
+	res, err := st.Etcd.Get(ctx, req.Key, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -229,7 +245,7 @@ func (st *Plugin) Set(ctx context.Context, req *store.SetRequest) (*store.SetRes
 	}
 
 	// Send the transaction to the etcd cluster
-	t, err := st.c.Txn(ctx).
+	t, err := st.Etcd.Txn(ctx).
 		If(cmps...).
 		Then(ops...).
 		Commit()
@@ -243,16 +259,18 @@ func (st *Plugin) Set(ctx context.Context, req *store.SetRequest) (*store.SetRes
 	}
 
 	// Send End of Transaction marker for watchers
-	eot := fmt.Sprintf("%s%d", ss.TxPrefix, t.Header.Revision)
-	lease, err := st.c.Grant(ctx, ss.TxEotTTL)
-	if err != nil {
-		st.log.Error("Failed to acquire lease")
-		return nil, err
-	}
-	_, err = st.c.Put(ctx, eot, "", clientv3.WithLease(lease.ID))
-	if err != nil {
-		st.log.Error("Failed to write end of transaction marker")
-		return nil, err
+	if enableEotMarkers {
+		eot := fmt.Sprintf("%s%d", ss.TxPrefix, t.Header.Revision)
+		lease, err := st.Etcd.Grant(ctx, ss.TxEotTTL)
+		if err != nil {
+			st.log.Error("Failed to acquire lease")
+			return nil, err
+		}
+		_, err = st.Etcd.Put(ctx, eot, "", clientv3.WithLease(lease.ID))
+		if err != nil {
+			st.log.Error("Failed to write end of transaction marker")
+			return nil, err
+		}
 	}
 
 	resp := &store.SetResponse{Revision: t.Header.Revision}
@@ -263,9 +281,8 @@ func (st *Plugin) Set(ctx context.Context, req *store.SetRequest) (*store.SetRes
 }
 
 // Watch returns a stream of object write operations.
-func Watch(req *store.WatchRequest) error {
-	// TODO
-	return nil
+func (st *Plugin) Watch(ctx context.Context, req *store.WatchRequest) (*store.WatchResponse, error) {
+	return nil, nil
 }
 
 func (st *Plugin) openConnection(cfg *configuration, isReadOnly bool) error {
@@ -285,7 +302,7 @@ func (st *Plugin) openConnection(cfg *configuration, isReadOnly bool) error {
 		return err
 	}
 
-	st.c, err = clientv3.New(clientv3.Config{
+	st.Etcd, err = clientv3.New(clientv3.Config{
 		Endpoints:   cfg.Endpoints,
 		DialTimeout: dialTimeout,
 		TLS:         tls,
@@ -298,7 +315,7 @@ func (st *Plugin) openConnection(cfg *configuration, isReadOnly bool) error {
 }
 
 func (st *Plugin) close() {
-	if st.c != nil {
-		st.c.Close()
+	if st.Etcd != nil {
+		st.Etcd.Close()
 	}
 }

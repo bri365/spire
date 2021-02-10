@@ -106,7 +106,7 @@ func (s *PluginSuite) SetupTest() {
 	ssLogger := common_log.NewHCLogAdapter(log, telemetry.PluginBuiltIn).Named("shim")
 	s.st = s.newPlugin()
 	cfg := &ss.Configuration{}
-	s.shim, err = ss.New(nil, s.st, ssLogger, cfg)
+	s.shim, err = ss.New(nil, s.st, ssLogger, cfg, s.etcdPlugin.Etcd)
 	if err != nil {
 		s.T().Log(err)
 	}

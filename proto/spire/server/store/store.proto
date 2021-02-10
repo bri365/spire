@@ -164,5 +164,6 @@ service Store {
     rpc Set(SetRequest) returns (SetResponse);
 
     // Watch returns a stream of store updates to keep caches current
-    // rpc Watch(WatchRequest) returns (stream WatchResponse);
+    // TODO sort out builtin catalog non-plugin client and server pieces so this can stream
+    rpc Watch(WatchRequest) returns (WatchResponse);
 }

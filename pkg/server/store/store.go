@@ -16,6 +16,7 @@ import (
 
 	"github.com/andres-erbsen/clock"
 	"github.com/hashicorp/go-hclog"
+	"github.com/roguesoftware/etcd/clientv3"
 	"github.com/spiffe/spire/pkg/server/plugin/datastore"
 	"github.com/spiffe/spire/pkg/server/plugin/store"
 )
@@ -26,6 +27,9 @@ type Shim struct {
 	datastore.DataStore
 	store.Store
 
+	// TODO - hack to workaround catalog non-plugin client/server issues
+	Etcd *clientv3.Client
+
 	cache Cache
 	cfg   *Configuration
 	log   hclog.Logger
@@ -33,11 +37,13 @@ type Shim struct {
 
 // Configuration represents store wide config, supplied by the plugin
 type Configuration struct {
-	DisableBundleRegCache bool
-	DisableNodeCache      bool
-	DisableTokenCache     bool
-	HeartbeatInterval     int
-	WriteResponseDelay    int
+	DisableBundleCache bool
+	DisableEntryCache  bool
+	DisableNodeCache   bool
+	DisableTokenCache  bool
+	EnableEotMarkers   bool
+	HeartbeatInterval  int
+	WriteResponseDelay int
 }
 
 // Key creation constants for items and indices
@@ -103,9 +109,12 @@ var (
 )
 
 // New returns an initialized store.
-func New(ds datastore.DataStore, st store.Store, logger hclog.Logger, cfg *Configuration) (*Shim, error) {
+func New(ds datastore.DataStore, st store.Store, logger hclog.Logger,
+	cfg *Configuration, etcd *clientv3.Client) (*Shim, error) {
 	store := &Shim{DataStore: ds, Store: st, log: logger}
 	store.cache = NewCache(cfg, clock.New(), logger)
+	store.cfg = cfg
+	store.Etcd = etcd
 	if err := store.Initialize(); err != nil {
 		return nil, err
 	}
