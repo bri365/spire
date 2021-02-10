@@ -122,6 +122,29 @@ message SetResponse {
     int64 revision = 1;
 }
 
+// Watch returns a stream of store updates to keep caches current
+message WatchRequest {
+    // The key to watch.
+    string key = 1;
+
+    // Set to request a range rather than a single key.
+    string end = 2;
+
+    // The store revision to begin reporting key/range change events.
+    string rev = 3;
+}
+
+message WatchResponse {
+    // Operation that was performed.
+    Operation op = 1;
+
+    // The object after the operation.
+    KeyValue kv = 2;
+
+    // The object prior to the operation.
+    KeyValue prev = 3;
+}
+
 
 /////////////////////////////////////////////////////////////////////////////
 // Service Definition
@@ -139,4 +162,7 @@ service Store {
 
     // Set one or more items (create, delete, update, and set/upsert) in the store as a single transaction.
     rpc Set(SetRequest) returns (SetResponse);
+
+    // Watch returns a stream of store updates to keep caches current
+    // rpc Watch(WatchRequest) returns (stream WatchResponse);
 }

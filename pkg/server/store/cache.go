@@ -103,6 +103,9 @@ func (s *Shim) Initialize() error {
 		go s.watchTokens()
 	}
 
+	// Start server heartbeat
+	// TODO
+
 	return nil
 }
 
@@ -227,6 +230,7 @@ func (s *Shim) loadTokens(revision int64) (rev int64, err error) {
 // watchBundlesAndRegistrations receives a stream of updates (deletes or puts)
 // for bundles and registration entries, starting at the given store revision.
 func (s *Shim) watchBundlesAndRegistrations() error {
+	// err := etcd.Watch(&store.WatchRequest{})
 	return nil
 }
 

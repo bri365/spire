@@ -24,6 +24,8 @@ type StoreClient = store.StoreClient                           //nolint: golint
 type StoreServer = store.StoreServer                           //nolint: golint
 type UnimplementedStoreServer = store.UnimplementedStoreServer //nolint: golint
 type UnsafeStoreServer = store.UnsafeStoreServer               //nolint: golint
+type WatchRequest = store.WatchRequest                         //nolint: golint
+type WatchResponse = store.WatchResponse                       //nolint: golint
 
 const (
 	Type                = "Store"

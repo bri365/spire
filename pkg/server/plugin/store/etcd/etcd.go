@@ -26,7 +26,7 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// Plugin constant values
+// Plugin constants
 const (
 	PluginName = "etcd"
 )
@@ -260,6 +260,12 @@ func (st *Plugin) Set(ctx context.Context, req *store.SetRequest) (*store.SetRes
 	// TODO consider returning responses for the operations
 
 	return resp, nil
+}
+
+// Watch returns a stream of object write operations.
+func Watch(req *store.WatchRequest) error {
+	// TODO
+	return nil
 }
 
 func (st *Plugin) openConnection(cfg *configuration, isReadOnly bool) error {
