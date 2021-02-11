@@ -5,7 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
+	"io/ioutil"
 	"sync"
 	"time"
 
@@ -45,7 +45,8 @@ var (
 	dialTimeout    = 5 * time.Second
 	requestTimeout = 10 * time.Second
 
-	enableEotMarkers = false
+	enableEotMarkers   = false
+	writeResponseDelay = 0
 )
 
 // Plugin is a Store plugin implemented via etcd
@@ -137,8 +138,14 @@ func (st *Plugin) Configure(ctx context.Context, req *spi.ConfigureRequest) (*sp
 		requestTimeout = time.Duration(*cfg.RequestTimeout) * time.Second
 	}
 
+	if cfg.WriteResponseDelay != nil {
+		writeResponseDelay = *cfg.WriteResponseDelay
+	}
+
 	// Set Store level configuration
-	st.Cfg = &ss.Configuration{}
+	st.Cfg = &ss.Configuration{
+		HeartbeatInterval: ss.HeartbeatDefaultInterval,
+	}
 
 	if cfg.DisableBundleCache != nil {
 		st.Cfg.DisableBundleCache = *cfg.DisableBundleCache
@@ -165,12 +172,10 @@ func (st *Plugin) Configure(ctx context.Context, req *spi.ConfigureRequest) (*sp
 		st.Cfg.HeartbeatInterval = *cfg.HeartbeatInterval
 	}
 
-	if cfg.WriteResponseDelay != nil {
-		st.Cfg.WriteResponseDelay = *cfg.WriteResponseDelay
-	}
-
 	// TODO set proper logging for etcd client
-	clientv3.SetLogger(grpclog.NewLoggerV2(os.Stdout, os.Stdout, os.Stdout))
+	// NOTE: etcd client is noisy
+	// clientv3.SetLogger(grpclog.NewLoggerV2(os.Stdout, os.Stdout, os.Stdout))
+	clientv3.SetLogger(grpclog.NewLoggerV2(ioutil.Discard, ioutil.Discard, ioutil.Discard))
 
 	st.mu.Lock()
 	defer st.mu.Unlock()
@@ -294,6 +299,14 @@ func (st *Plugin) Set(ctx context.Context, req *store.SetRequest) (*store.SetRes
 			st.log.Error("Failed to write end of transaction marker")
 			return nil, err
 		}
+	}
+
+	// Write delay for cluster sync time
+	// Most, if not all, items should tolerate eventual consistency
+	// Watch update latency is monitored through periodic heartbeats
+	// and the delay value can be adjusted if stricter consistency is desired
+	if writeResponseDelay > 0 {
+		time.Sleep(time.Duration(writeResponseDelay) * time.Millisecond)
 	}
 
 	resp := &store.SetResponse{Revision: t.Header.Revision}

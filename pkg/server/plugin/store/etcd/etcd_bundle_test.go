@@ -42,6 +42,11 @@ func (s *PluginSuite) TestBundleCRUD() {
 	})
 	s.Require().NoError(err)
 
+	// fetch
+	fresp, err = s.shim.FetchBundle(ctx, &datastore.FetchBundleRequest{TrustDomainId: "spiffe://foo"})
+	s.Require().NoError(err)
+	s.AssertProtoEqual(bundle, fresp.Bundle)
+
 	// create again (constraint violation)
 	_, err = s.shim.CreateBundle(ctx, &datastore.CreateBundleRequest{
 		Bundle: bundle,

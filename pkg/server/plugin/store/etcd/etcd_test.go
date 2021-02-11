@@ -151,6 +151,8 @@ func (s *PluginSuite) newPlugin() store.Plugin {
 		root_ca_path = "/Users/brian/Dev/scytale/performance-tests/etcd/tf-etcd-vsphere/certs/ca.pem"
 		client_cert_path = "/Users/brian/Dev/scytale/performance-tests/etcd/tf-etcd-vsphere/certs/client.pem"
 		client_key_path = "/Users/brian/Dev/scytale/performance-tests/etcd/tf-etcd-vsphere/certs/client-key.pem"
+		heartbeat_interval = 0
+		write_response_delay = 50
 		`,
 	})
 	s.Require().NoError(err)

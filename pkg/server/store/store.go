@@ -13,7 +13,6 @@ package store
 
 import (
 	"fmt"
-	"time"
 
 	"github.com/andres-erbsen/clock"
 	"github.com/hashicorp/go-hclog"
@@ -34,6 +33,7 @@ type Shim struct {
 	Log hclog.Logger
 
 	cache Cache
+	clock clock.Clock
 	cfg   *Configuration
 }
 
@@ -113,10 +113,8 @@ var (
 // New returns an initialized store.
 func New(ds datastore.DataStore, st store.Store, logger hclog.Logger,
 	cfg *Configuration, etcd *clientv3.Client) (*Shim, error) {
-	store := &Shim{DataStore: ds, Store: st, Log: logger}
-	store.cfg = cfg
-	store.cache = NewCache(cfg, clock.New(), logger)
-	store.cache.hbInterval = time.Duration(cfg.HeartbeatInterval) * time.Second
+	store := &Shim{DataStore: ds, Store: st, Log: logger, cfg: cfg, clock: clock.New()}
+	store.cache = NewCache(cfg, logger)
 	store.Etcd = etcd
 	if err := store.Initialize(); err != nil {
 		return nil, err

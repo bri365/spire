@@ -8,7 +8,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/andres-erbsen/clock"
 	"github.com/golang/protobuf/proto"
 	"github.com/hashicorp/go-hclog"
 	"github.com/roguesoftware/etcd/clientv3"
@@ -20,26 +19,25 @@ import (
 type Cache struct {
 	datastore.DataStore
 
-	clock      clock.Clock
 	log        hclog.Logger
 	hbInterval time.Duration
 
-	bundleMu            sync.Mutex
+	bundleMu            sync.RWMutex
 	bundleCacheEnabled  bool
 	bundleStoreRevision int64
 	bundles             map[string]*common.Bundle
 
-	entryMu            sync.Mutex
+	entryMu            sync.RWMutex
 	entryCacheEnabled  bool
 	entryStoreRevision int64
 	entries            map[string]*common.RegistrationEntry
 
-	nodeMu            sync.Mutex
+	nodeMu            sync.RWMutex
 	nodeCacheEnabled  bool
 	nodeStoreRevision int64
 	nodes             map[string]*common.AttestedNode
 
-	tokenMu            sync.Mutex
+	tokenMu            sync.RWMutex
 	tokenCacheEnabled  bool
 	tokenStoreRevision int64
 	tokens             map[string]*datastore.JoinToken
@@ -47,20 +45,19 @@ type Cache struct {
 
 // Store cache constants
 const (
+	HeartbeatDefaultInterval = 5
+	TxEotTTL                 = 60
+
+	hbTTL        = 1
 	loadPageSize = 10000
-
-	// TxEotTtl defines the lifespan of the end of transaction markers in seconds
-	TxEotTTL = 60
-
-	// Heartbeat message TTL
-	hbTTL = 1
+	watchUpdate  = 0
+	watchDelete  = 1
 )
 
 // NewCache returns an initialized cache object.
-func NewCache(cfg *Configuration, clock clock.Clock, logger hclog.Logger) Cache {
+func NewCache(cfg *Configuration, logger hclog.Logger) Cache {
 	return Cache{
-		clock: clock,
-		log:   logger,
+		log: logger,
 
 		bundles: map[string]*common.Bundle{},
 		entries: map[string]*common.RegistrationEntry{},
@@ -71,6 +68,8 @@ func NewCache(cfg *Configuration, clock clock.Clock, logger hclog.Logger) Cache 
 		entryCacheEnabled:  !cfg.DisableEntryCache,
 		nodeCacheEnabled:   !cfg.DisableNodeCache,
 		tokenCacheEnabled:  !cfg.DisableTokenCache,
+
+		hbInterval: time.Duration(cfg.HeartbeatInterval) * time.Second,
 	}
 }
 
@@ -148,7 +147,7 @@ func (s *Shim) loadBundles(revision int64) (int64, error) {
 
 		count := len(br.Bundles)
 		token = br.Pagination.Token
-		s.Log.Info(fmt.Sprintf("load bundles count: %d, token: %s, rev: %d", count, token, rev))
+		s.Log.Debug(fmt.Sprintf("load bundles count: %d, token: %s, rev: %d", count, token, rev))
 		if token == "" || count == 0 {
 			break
 		}
@@ -186,7 +185,7 @@ func (s *Shim) loadEntries(revision int64) (int64, error) {
 
 		count := len(er.Entries)
 		token = er.Pagination.Token
-		s.Log.Info(fmt.Sprintf("load entries count: %d, token: %s, rev: %d", count, token, rev))
+		s.Log.Debug(fmt.Sprintf("load entries count: %d, token: %s, rev: %d", count, token, rev))
 		if token == "" || count == 0 {
 			break
 		}
@@ -224,7 +223,7 @@ func (s *Shim) loadNodes(revision int64) (int64, error) {
 
 		count := len(nr.Nodes)
 		token = nr.Pagination.Token
-		s.Log.Info(fmt.Sprintf("load nodes count: %d, token: %s, rev: %d", count, token, rev))
+		s.Log.Debug(fmt.Sprintf("load nodes count: %d, token: %s, rev: %d", count, token, rev))
 		if token == "" || count == 0 {
 			break
 		}
@@ -256,7 +255,7 @@ func (s *Shim) loadTokens(revision int64) (rev int64, err error) {
 
 		count := len(tr.JoinTokens)
 		token = tr.Pagination.Token
-		s.Log.Info(fmt.Sprintf("load tokens count: %d, token: %s, rev: %d", count, token, rev))
+		s.Log.Debug(fmt.Sprintf("load tokens count: %d, token: %s, rev: %d", count, token, rev))
 		if token == "" || count == 0 {
 			break
 		}
@@ -282,7 +281,7 @@ func (s *Shim) watchBundles(rev int64) error {
 	}
 	// Using bundleKeyID instead of bundlePrefix will also return index updates
 	bChan := s.Etcd.Watch(context.TODO(), bundlePrefix, opts...)
-	s.Log.Info(fmt.Sprintf("Watching bundle updates from %d", rev))
+	s.Log.Debug(fmt.Sprintf("Watching bundle updates from %d", rev))
 
 	for w := range bChan {
 		if w.Err() != nil {
@@ -296,8 +295,7 @@ func (s *Shim) watchBundles(rev int64) error {
 		}
 
 		for _, e := range w.Events {
-			s.Log.Info(fmt.Sprintf("%s %s at version %d at revision %d",
-				e.Type, e.Kv.Key, e.Kv.Version, e.Kv.ModRevision))
+			s.Log.Debug(fmt.Sprintf("%s %s at %d", e.Type, e.Kv.Key, time.Now().UnixNano()))
 
 			bundle := &common.Bundle{}
 			err := proto.Unmarshal(e.Kv.Value, bundle)
@@ -305,9 +303,17 @@ func (s *Shim) watchBundles(rev int64) error {
 				s.Log.Error(fmt.Sprintf("%v on %v", err, e.Kv.Value))
 			}
 
-			s.cache.bundleMu.Lock()
-			s.cache.bundles[bundle.TrustDomainId] = bundle
-			s.cache.bundleMu.Unlock()
+			if e.Type == watchDelete {
+				s.cache.bundleMu.Lock()
+				delete(s.cache.bundles, bundle.TrustDomainId)
+				s.cache.bundleMu.Unlock()
+			} else if e.Type == watchUpdate {
+				s.cache.bundleMu.Lock()
+				s.cache.bundles[bundle.TrustDomainId] = bundle
+				s.cache.bundleMu.Unlock()
+			} else {
+				s.Log.Error(fmt.Sprintf("Unknown watch event %v", e))
+			}
 		}
 	}
 
@@ -327,7 +333,7 @@ func (s *Shim) watchEntries(rev int64) error {
 	}
 	// Using entryKeyID instead of entryPrefix will also return index updates
 	eChan := s.Etcd.Watch(context.TODO(), entryPrefix, opts...)
-	s.Log.Info(fmt.Sprintf("Watching entry updates from %d", rev))
+	s.Log.Debug(fmt.Sprintf("Watching entry updates from %d", rev))
 
 	for w := range eChan {
 		if w.Err() != nil {
@@ -341,7 +347,7 @@ func (s *Shim) watchEntries(rev int64) error {
 		}
 
 		for _, e := range w.Events {
-			s.Log.Info(fmt.Sprintf("%s %s at version %d at revision %d",
+			s.Log.Debug(fmt.Sprintf("%s %s at version %d at revision %d",
 				e.Type, e.Kv.Key, e.Kv.Version, e.Kv.ModRevision))
 
 			entry := &common.RegistrationEntry{}
@@ -372,7 +378,7 @@ func (s *Shim) watchNodes(rev int64) error {
 	}
 	// Using nodeKeyID instead of nodePrefix will also return index updates
 	nChan := s.Etcd.Watch(context.TODO(), nodePrefix, opts...)
-	s.Log.Info(fmt.Sprintf("Watching node updates from %d", rev))
+	s.Log.Debug(fmt.Sprintf("Watching node updates from %d", rev))
 
 	for w := range nChan {
 		if w.Err() != nil {
@@ -386,7 +392,7 @@ func (s *Shim) watchNodes(rev int64) error {
 		}
 
 		for _, e := range w.Events {
-			s.Log.Info(fmt.Sprintf("%s %s at version %d at revision %d",
+			s.Log.Debug(fmt.Sprintf("%s %s at version %d at revision %d",
 				e.Type, e.Kv.Key, e.Kv.Version, e.Kv.ModRevision))
 
 			node := &common.AttestedNode{}
@@ -417,7 +423,7 @@ func (s *Shim) watchTokens(rev int64) error {
 	}
 	// Using tokenKeyID instead of tokenPrefix will also return index updates
 	tChan := s.Etcd.Watch(context.TODO(), tokenPrefix, opts...)
-	s.Log.Info(fmt.Sprintf("Watching token updates from %d", rev))
+	s.Log.Debug(fmt.Sprintf("Watching token updates from %d", rev))
 
 	for w := range tChan {
 		if w.Err() != nil {
@@ -431,7 +437,7 @@ func (s *Shim) watchTokens(rev int64) error {
 		}
 
 		for _, e := range w.Events {
-			s.Log.Info(fmt.Sprintf("%s %s at version %d at revision %d",
+			s.Log.Debug(fmt.Sprintf("%s %s at version %d at revision %d",
 				e.Type, e.Kv.Key, e.Kv.Version, e.Kv.ModRevision))
 
 			token := &datastore.JoinToken{}
@@ -462,11 +468,11 @@ func (s *Shim) hbStart() {
 	}
 
 	if s.cache.hbInterval == 0 {
-		s.Log.Info("Heartbeat disabled")
+		s.Log.Warn("Heartbeat disabled")
 		return
 	}
 
-	s.Log.Info(fmt.Sprintf("Starting heartbeat with id %d", rev))
+	s.Log.Debug(fmt.Sprintf("Starting heartbeat with id %d", rev))
 	go s.hbReply(context.TODO(), rev+1)
 	go s.hbSend(rev + 1)
 }
@@ -475,9 +481,9 @@ func (s *Shim) hbStart() {
 func (s *Shim) hbSend(rev int64) {
 	id := fmt.Sprintf("%d", rev)
 	// Loop every interval forever
-	ticker := s.cache.clock.Ticker(s.cache.hbInterval)
+	ticker := s.clock.Ticker(s.cache.hbInterval)
 	for t := range ticker.C {
-		s.Log.Info(fmt.Sprintf("Sending heartbeat %q at %d", id, t.UnixNano()))
+		s.Log.Debug(fmt.Sprintf("Sending heartbeat %q at %d", id, t.UnixNano()))
 		s.sendHB(context.TODO(), id, "", t.UnixNano())
 	}
 }
@@ -509,7 +515,7 @@ func (s *Shim) hbReply(ctx context.Context, rev int64) {
 				continue
 			}
 			originator, responder, ts := s.parseHB(e)
-			delta := float64(s.cache.clock.Now().UnixNano()-ts) / 1000000.0
+			delta := float64(s.clock.Now().UnixNano()-ts) / 1000000.0
 			if originator == id {
 				if responder == "" {
 					s.Log.Info(fmt.Sprintf("self heartbeat in %.2fms", delta))
@@ -518,7 +524,7 @@ func (s *Shim) hbReply(ctx context.Context, rev int64) {
 				}
 			} else if originator != "" && responder == "" {
 				// reply to foreign heartbeat
-				s.Log.Info(fmt.Sprintf("reply to %s", originator))
+				s.Log.Debug(fmt.Sprintf("reply to %s", originator))
 				_, err := s.sendHB(ctx, originator, id, ts)
 				if err != nil {
 					s.Log.Error(fmt.Sprintf("Error sending heartbeat reply to %s %v", originator, err))
