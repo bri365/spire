@@ -468,7 +468,7 @@ func (s *Shim) hbStart() {
 	}
 
 	if s.cache.hbInterval == 0 {
-		s.Log.Warn("Heartbeat disabled")
+		// s.Log.Warn("Heartbeat disabled")
 		return
 	}
 

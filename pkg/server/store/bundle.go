@@ -50,6 +50,7 @@ func (s *Shim) AppendBundle(ctx context.Context,
 		}
 		return &datastore.AppendBundleResponse{Bundle: bundle}, nil
 	}
+
 	return &datastore.AppendBundleResponse{Bundle: bundle}, nil
 }
 
@@ -107,8 +108,6 @@ func (s *Shim) CreateBundle(ctx context.Context,
 		return nil, err
 	}
 
-	s.Log.Debug(fmt.Sprintf("Created bundle %s at %d", req.Bundle.TrustDomainId, s.clock.Now().UnixNano()))
-
 	return &datastore.CreateBundleResponse{Bundle: req.Bundle}, nil
 }
 
@@ -120,13 +119,13 @@ func (s *Shim) DeleteBundle(ctx context.Context,
 		return s.DataStore.DeleteBundle(ctx, req)
 	}
 
-	trustDomainID, err := idutil.NormalizeSpiffeID(req.TrustDomainId, idutil.AllowAnyTrustDomain())
+	id, err := idutil.NormalizeSpiffeID(req.TrustDomainId, idutil.AllowAnyTrustDomain())
 	if err != nil {
 		return nil, err
 	}
 
 	// Get current bundle and version for transactional integrity
-	fb, ver, err := s.fetchBundle(ctx, &datastore.FetchBundleRequest{TrustDomainId: trustDomainID})
+	fb, ver, err := s.fetchBundle(ctx, &datastore.FetchBundleRequest{TrustDomainId: id})
 	if err != nil {
 		return nil, err
 	}
@@ -137,8 +136,8 @@ func (s *Shim) DeleteBundle(ctx context.Context,
 
 	// Verify no registered entries are federated with this trust domain
 	gr, err := s.Store.Get(ctx, &store.GetRequest{
-		Key: entryFedByDomainKey("", trustDomainID),
-		End: entryFedByDomainEnd(trustDomainID),
+		Key: entryFedByDomainKey("", id),
+		End: entryFedByDomainEnd(id),
 	})
 	if len(gr.Kvs) > 0 {
 		if req.Mode == datastore.DeleteBundleRequest_RESTRICT {
@@ -167,7 +166,7 @@ func (s *Shim) DeleteBundle(ctx context.Context,
 					return nil, err
 				}
 
-				fe.Entry.FederatesWith = removeString(fe.Entry.FederatesWith, trustDomainID)
+				fe.Entry.FederatesWith = removeString(fe.Entry.FederatesWith, id)
 
 				_, err = s.UpdateRegistrationEntry(ctx, &datastore.UpdateRegistrationEntryRequest{
 					Entry: fe.Entry,
@@ -182,13 +181,16 @@ func (s *Shim) DeleteBundle(ctx context.Context,
 
 	// Add to delete list, ensuring bundle version matches read from above
 	del := []*store.KeyValue{{
-		Key:     bundleKey(trustDomainID),
+		Key:     bundleKey(id),
 		Compare: store.Compare_EQUALS,
 		Version: ver,
 	}}
 
 	// One delete operation for this transaction
 	tx := []*store.SetRequestElement{{Operation: store.Operation_DELETE, Kvs: del}}
+
+	// Invalidate cache entry here to prevent race condition with async watcher
+	s.removeBundleCacheEntry(id)
 
 	_, err = s.Store.Set(ctx, &store.SetRequest{Elements: tx})
 	if err != nil {
@@ -198,8 +200,6 @@ func (s *Shim) DeleteBundle(ctx context.Context,
 		}
 		return nil, err
 	}
-
-	s.Log.Debug(fmt.Sprintf("Deleted bundle %s at %d", trustDomainID, s.clock.Now().UnixNano()))
 
 	return &datastore.DeleteBundleResponse{Bundle: b}, nil
 }
@@ -217,18 +217,25 @@ func (s *Shim) FetchBundle(ctx context.Context,
 		return
 	}
 
-	if s.cfg.DisableBundleCache {
-		resp, _, err = s.fetchBundle(ctx, req)
-		return
+	if s.cache.bundleCacheEnabled {
+		s.cache.bundleMu.RLock()
+		bundle := s.cache.bundles[req.TrustDomainId]
+		s.cache.bundleMu.RUnlock()
+
+		if bundle != nil {
+			resp = &datastore.FetchBundleResponse{Bundle: bundle}
+			return
+		}
 	}
 
-	s.Log.Debug(fmt.Sprintf("Fetching bundle %s from cache at %d",
-		req.TrustDomainId, s.clock.Now().UnixNano()))
+	resp, _, err = s.fetchBundle(ctx, req)
 
-	resp = &datastore.FetchBundleResponse{}
-	s.cache.bundleMu.RLock()
-	resp.Bundle = s.cache.bundles[req.TrustDomainId]
-	s.cache.bundleMu.RUnlock()
+	// Update cache with missing entry
+	if resp.Bundle != nil && s.cache.bundleCacheEnabled {
+		s.cache.bundleMu.Lock()
+		s.cache.bundles[req.TrustDomainId] = resp.Bundle
+		s.cache.bundleMu.Unlock()
+	}
 
 	return
 }
@@ -298,7 +305,6 @@ func (s *Shim) listBundles(ctx context.Context, rev int64,
 		}
 	}
 
-	// TODO consider getting from cache - requires cache to maintain a sorted array of bundle IDs
 	res, err := s.Store.Get(ctx, &store.GetRequest{Key: key, End: end, Limit: limit, Revision: rev})
 	if err != nil {
 		return nil, 0, err
@@ -360,8 +366,6 @@ func (s *Shim) PruneBundle(ctx context.Context,
 		}
 	}
 
-	s.Log.Debug(fmt.Sprintf("Pruned bundle at %d", s.clock.Now().UnixNano()))
-
 	return &datastore.PruneBundleResponse{BundleChanged: changed}, nil
 }
 
@@ -392,8 +396,6 @@ func (s *Shim) SetBundle(ctx context.Context,
 	if err != nil {
 		return nil, err
 	}
-
-	s.Log.Debug(fmt.Sprintf("Set bundle at %d", s.clock.Now().UnixNano()))
 
 	return &datastore.SetBundleResponse{Bundle: bundle}, nil
 }
@@ -459,12 +461,13 @@ func (s *Shim) updateBundle(ctx context.Context,
 	// One put operation for this transaction
 	tx := []*store.SetRequestElement{{Operation: store.Operation_PUT, Kvs: kvs}}
 
+	// Invalidate cache entry here to prevent race condition with async watcher
+	s.removeBundleCacheEntry(id)
+
 	_, err = s.Store.Set(ctx, &store.SetRequest{Elements: tx})
 	if err != nil {
 		return nil, err
 	}
-
-	s.Log.Debug(fmt.Sprintf("Updated bundle at %d", s.clock.Now().UnixNano()))
 
 	return &datastore.UpdateBundleResponse{Bundle: req.Bundle}, nil
 }
@@ -473,4 +476,13 @@ func (s *Shim) updateBundle(ctx context.Context,
 func bundleKey(id string) string {
 	// e.g. "B|spiffie://example.com"
 	return fmt.Sprintf("%s%s", bundlePrefix, id)
+}
+
+// remove the given key from the cache
+func (s *Shim) removeBundleCacheEntry(id string) {
+	if s.cache.bundleCacheEnabled {
+		s.cache.bundleMu.RLock()
+		delete(s.cache.bundles, id)
+		s.cache.bundleMu.RUnlock()
+	}
 }
