@@ -108,12 +108,17 @@ func (cfg *configuration) Validate() error {
 		return errors.New("At least one endpoint must be set")
 	}
 
+	if cfg.ClientCertPath == "" || cfg.ClientKeyPath == "" || cfg.RootCAPath == "" {
+		return errors.New("client_cert_path, client_key_path, and root_ca_path must be set")
+	}
+
 	return nil
 }
 
 // Configure parses HCL config payload into config struct and opens etcd connection
 func (st *Plugin) Configure(ctx context.Context, req *spi.ConfigureRequest) (*spi.ConfigureResponse, error) {
 	st.log.Info("Configuring etcd store")
+
 	cfg := &configuration{}
 	if err := hcl.Decode(cfg, req.Configuration); err != nil {
 		return nil, err
@@ -123,6 +128,7 @@ func (st *Plugin) Configure(ctx context.Context, req *spi.ConfigureRequest) (*sp
 		return nil, err
 	}
 
+	// Set etcd level variables
 	if cfg.DialTimeout != nil {
 		dialTimeout = time.Duration(*cfg.DialTimeout) * time.Second
 	}
@@ -134,6 +140,22 @@ func (st *Plugin) Configure(ctx context.Context, req *spi.ConfigureRequest) (*sp
 	// Set Store level configuration
 	st.Cfg = &ss.Configuration{}
 
+	if cfg.DisableBundleCache != nil {
+		st.Cfg.DisableBundleCache = *cfg.DisableBundleCache
+	}
+
+	if cfg.DisableEntryCache != nil {
+		st.Cfg.DisableEntryCache = *cfg.DisableEntryCache
+	}
+
+	if cfg.DisableNodeCache != nil {
+		st.Cfg.DisableNodeCache = *cfg.DisableNodeCache
+	}
+
+	if cfg.DisableTokenCache != nil {
+		st.Cfg.DisableTokenCache = *cfg.DisableTokenCache
+	}
+
 	if cfg.EnableEotMarkers != nil {
 		st.Cfg.EnableEotMarkers = *cfg.EnableEotMarkers
 		enableEotMarkers = *cfg.EnableEotMarkers
@@ -143,7 +165,11 @@ func (st *Plugin) Configure(ctx context.Context, req *spi.ConfigureRequest) (*sp
 		st.Cfg.HeartbeatInterval = *cfg.HeartbeatInterval
 	}
 
-	// TODO set proper logging
+	if cfg.WriteResponseDelay != nil {
+		st.Cfg.WriteResponseDelay = *cfg.WriteResponseDelay
+	}
+
+	// TODO set proper logging for etcd client
 	clientv3.SetLogger(grpclog.NewLoggerV2(os.Stdout, os.Stdout, os.Stdout))
 
 	st.mu.Lock()
@@ -278,15 +304,12 @@ func (st *Plugin) Set(ctx context.Context, req *store.SetRequest) (*store.SetRes
 }
 
 // Watch returns a stream of object write operations.
+// TODO figure out how to implement gRPC streaming with the current catalog bypass.
 func (st *Plugin) Watch(ctx context.Context, req *store.WatchRequest) (*store.WatchResponse, error) {
 	return nil, nil
 }
 
 func (st *Plugin) openConnection(cfg *configuration, isReadOnly bool) error {
-	if cfg.ClientCertPath == "" || cfg.ClientKeyPath == "" || cfg.RootCAPath == "" {
-		return errors.New("client_cert_path, client_key_path, and root_ca_path must be set")
-	}
-
 	tlsInfo := transport.TLSInfo{
 		KeyFile:        cfg.ClientKeyPath,
 		CertFile:       cfg.ClientCertPath,
