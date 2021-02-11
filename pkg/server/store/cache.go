@@ -162,6 +162,34 @@ func (s *Shim) loadBundles(revision int64) (int64, error) {
 	return rev, nil
 }
 
+// Add or update the given bundle in the cache
+func (s *Shim) setBundleCacheEntry(id string, bundle *common.Bundle) {
+	if s.cache.bundleCacheEnabled {
+		s.cache.bundleMu.Lock()
+		s.cache.bundles[id] = bundle
+		s.cache.bundleMu.Unlock()
+	}
+}
+
+// Fetch the given bundle from the cache
+func (s *Shim) fetchBundleCacheEntry(id string) *common.Bundle {
+	if !s.cache.bundleCacheEnabled {
+		return nil
+	}
+	s.cache.bundleMu.RLock()
+	defer s.cache.bundleMu.RUnlock()
+	return s.cache.bundles[id]
+}
+
+// Remove the given bundle from the cache
+func (s *Shim) removeBundleCacheEntry(id string) {
+	if s.cache.bundleCacheEnabled {
+		s.cache.bundleMu.Lock()
+		delete(s.cache.bundles, id)
+		s.cache.bundleMu.Unlock()
+	}
+}
+
 // loadEntries performs the initial cache load for registration entries
 func (s *Shim) loadEntries(revision int64) (int64, error) {
 	s.cache.entryMu.Lock()
@@ -198,6 +226,34 @@ func (s *Shim) loadEntries(revision int64) (int64, error) {
 	s.cache.entryStoreRevision = rev
 
 	return rev, nil
+}
+
+// Add or update the given attested entry in the cache
+func (s *Shim) setEntryCacheEntry(id string, entry *common.RegistrationEntry) {
+	if s.cache.entryCacheEnabled {
+		s.cache.entryMu.Lock()
+		s.cache.entries[id] = entry
+		s.cache.entryMu.Unlock()
+	}
+}
+
+// Fetch the given attested entry from the cache
+func (s *Shim) fetchEntryCacheEntry(id string) *common.RegistrationEntry {
+	if !s.cache.entryCacheEnabled {
+		return nil
+	}
+	s.cache.entryMu.RLock()
+	defer s.cache.entryMu.RUnlock()
+	return s.cache.entries[id]
+}
+
+// Remove the given registration entry from the cache
+func (s *Shim) removeEntryCacheEntry(id string) {
+	if s.cache.entryCacheEnabled {
+		s.cache.entryMu.Lock()
+		delete(s.cache.entries, id)
+		s.cache.entryMu.Unlock()
+	}
 }
 
 // loadNodes performs the initial cache load for attested nodes.
@@ -238,6 +294,34 @@ func (s *Shim) loadNodes(revision int64) (int64, error) {
 	return rev, nil
 }
 
+// Add or update the given attested node in the cache
+func (s *Shim) setNodeCacheEntry(id string, node *common.AttestedNode) {
+	if s.cache.nodeCacheEnabled {
+		s.cache.nodeMu.Lock()
+		s.cache.nodes[id] = node
+		s.cache.nodeMu.Unlock()
+	}
+}
+
+// Fetch the given attested node from the cache
+func (s *Shim) fetchNodeCacheEntry(id string) *common.AttestedNode {
+	if !s.cache.nodeCacheEnabled {
+		return nil
+	}
+	s.cache.nodeMu.RLock()
+	defer s.cache.nodeMu.RUnlock()
+	return s.cache.nodes[id]
+}
+
+// Remove the given attested node from the cache
+func (s *Shim) removeNodeCacheEntry(id string) {
+	if s.cache.nodeCacheEnabled {
+		s.cache.nodeMu.Lock()
+		delete(s.cache.nodes, id)
+		s.cache.nodeMu.Unlock()
+	}
+}
+
 // loadTokens performs the initial cache load for join tokens.
 func (s *Shim) loadTokens(revision int64) (rev int64, err error) {
 	s.cache.tokenMu.Lock()
@@ -268,6 +352,34 @@ func (s *Shim) loadTokens(revision int64) (rev int64, err error) {
 	s.cache.tokenStoreRevision = rev
 
 	return
+}
+
+// Add or update the given join token in the cache
+func (s *Shim) setTokenCacheEntry(id string, token *datastore.JoinToken) {
+	if s.cache.tokenCacheEnabled {
+		s.cache.tokenMu.Lock()
+		s.cache.tokens[id] = token
+		s.cache.tokenMu.Unlock()
+	}
+}
+
+// Fetch the given join token from the cache
+func (s *Shim) fetchTokenCacheEntry(id string) *datastore.JoinToken {
+	if !s.cache.tokenCacheEnabled {
+		return nil
+	}
+	s.cache.tokenMu.RLock()
+	defer s.cache.tokenMu.RUnlock()
+	return s.cache.tokens[id]
+}
+
+// Remove the given join token from the cache
+func (s *Shim) removeTokenCacheEntry(id string) {
+	if s.cache.tokenCacheEnabled {
+		s.cache.tokenMu.Lock()
+		delete(s.cache.tokens, id)
+		s.cache.tokenMu.Unlock()
+	}
 }
 
 // watchBundlesAndRegistrations receives a stream of updates (deletes or puts)

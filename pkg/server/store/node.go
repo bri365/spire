@@ -125,6 +125,9 @@ func (s *Shim) DeleteAttestedNode(ctx context.Context,
 	// One delete operation for all keys in the transaction
 	tx := []*store.SetRequestElement{{Operation: store.Operation_DELETE, Kvs: del}}
 
+	// Invalidate cache entry here to prevent race condition with async watcher
+	s.removeNodeCacheEntry(n.SpiffeId)
+
 	_, err = s.Store.Set(ctx, &store.SetRequest{Elements: tx})
 	if err != nil {
 		return nil, err
@@ -141,7 +144,18 @@ func (s *Shim) FetchAttestedNode(ctx context.Context,
 		return s.DataStore.FetchAttestedNode(ctx, req)
 	}
 
+	node := s.fetchNodeCacheEntry(req.SpiffeId)
+	if node != nil {
+		resp = &datastore.FetchAttestedNodeResponse{Node: node}
+		return
+	}
+
 	resp, _, err = s.fetchNode(ctx, req)
+	if resp.Node == nil {
+		return
+	}
+
+	s.setNodeCacheEntry(req.SpiffeId, node)
 
 	return
 }
@@ -309,6 +323,9 @@ func (s *Shim) listAttestedNodes(ctx context.Context, rev int64,
 				continue
 			}
 
+			// TODO fetch these from cache
+			// NOTE: this will involve either adding store version to cache entries or caching
+			// the protobuf response rather than the unmarshalled node
 			res, err := s.Store.Get(ctx, &store.GetRequest{Key: nodeKey(id), Revision: rev})
 			if err != nil {
 				return nil, 0, err
@@ -462,6 +479,9 @@ func (s *Shim) UpdateAttestedNode(ctx context.Context,
 	}
 	tx = append(tx, &store.SetRequestElement{Kvs: put, Operation: store.Operation_PUT})
 
+	// Invalidate cache entry here to prevent race condition with async watcher
+	s.removeNodeCacheEntry(n.SpiffeId)
+
 	// Submit transaction
 	_, err = s.Store.Set(ctx, &store.SetRequest{Elements: tx})
 	if err != nil {
@@ -602,6 +622,9 @@ func (s *Shim) SetNodeSelectors(ctx context.Context,
 
 	// Add put operation for node update and new selectors to transaction
 	tx = append(tx, &store.SetRequestElement{Kvs: put, Operation: store.Operation_PUT})
+
+	// Invalidate cache entry here to prevent race condition with async watcher
+	s.removeNodeCacheEntry(n.SpiffeId)
 
 	// Submit transaction
 	_, err = s.Store.Set(ctx, &store.SetRequest{Elements: tx})

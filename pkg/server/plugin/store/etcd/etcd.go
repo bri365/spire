@@ -317,11 +317,12 @@ func (st *Plugin) Set(ctx context.Context, req *store.SetRequest) (*store.SetRes
 }
 
 // Watch returns a stream of object write operations.
-// TODO figure out how to implement gRPC streaming with the current catalog bypass.
+// TODO figure out how to implement gRPC streaming with the current catalog bypass
 func (st *Plugin) Watch(ctx context.Context, req *store.WatchRequest) (*store.WatchResponse, error) {
 	return nil, nil
 }
 
+// TODO open multiple client connections for improved performance
 func (st *Plugin) openConnection(cfg *configuration, isReadOnly bool) error {
 	tlsInfo := transport.TLSInfo{
 		KeyFile:        cfg.ClientKeyPath,
@@ -348,7 +349,7 @@ func (st *Plugin) openConnection(cfg *configuration, isReadOnly bool) error {
 }
 
 func (st *Plugin) close() {
-	// TODO stop heartbeat
+	// TODO stop heartbeat routines?
 	if st.Etcd != nil {
 		// TODO close watchers first?
 		st.Etcd.Close()

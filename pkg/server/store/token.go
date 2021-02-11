@@ -26,6 +26,8 @@ func (s *Shim) CreateJoinToken(ctx context.Context,
 	}
 
 	// Build the entry record key and value
+	// NOTE: since the key is the token, we could save store space
+	// by not including the token again in the value
 	j := req.JoinToken
 	k := tokenKey(j.Token)
 	v, err := proto.Marshal(j)
@@ -83,6 +85,9 @@ func (s *Shim) DeleteJoinToken(ctx context.Context,
 	// One delete operation for all keys in the transaction
 	tx := []*store.SetRequestElement{{Operation: store.Operation_DELETE, Kvs: del}}
 
+	// Invalidate cache entry here to prevent race condition with async watcher
+	s.removeTokenCacheEntry(j.Token)
+
 	_, err = s.Store.Set(ctx, &store.SetRequest{Elements: tx})
 	if err != nil {
 		return nil, err
@@ -99,7 +104,18 @@ func (s *Shim) FetchJoinToken(ctx context.Context,
 		return s.DataStore.FetchJoinToken(ctx, req)
 	}
 
+	token := s.fetchTokenCacheEntry(req.Token)
+	if token != nil {
+		resp = &datastore.FetchJoinTokenResponse{JoinToken: token}
+		return
+	}
+
 	resp, _, err = s.fetchToken(ctx, req)
+	if resp.JoinToken == nil {
+		return
+	}
+
+	s.setTokenCacheEntry(req.Token, token)
 
 	return
 }

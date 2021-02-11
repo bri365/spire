@@ -217,25 +217,18 @@ func (s *Shim) FetchBundle(ctx context.Context,
 		return
 	}
 
-	if s.cache.bundleCacheEnabled {
-		s.cache.bundleMu.RLock()
-		bundle := s.cache.bundles[req.TrustDomainId]
-		s.cache.bundleMu.RUnlock()
-
-		if bundle != nil {
-			resp = &datastore.FetchBundleResponse{Bundle: bundle}
-			return
-		}
+	bundle := s.fetchBundleCacheEntry(req.TrustDomainId)
+	if bundle != nil {
+		resp = &datastore.FetchBundleResponse{Bundle: bundle}
+		return
 	}
 
 	resp, _, err = s.fetchBundle(ctx, req)
-
-	// Update cache with missing entry
-	if resp.Bundle != nil && s.cache.bundleCacheEnabled {
-		s.cache.bundleMu.Lock()
-		s.cache.bundles[req.TrustDomainId] = resp.Bundle
-		s.cache.bundleMu.Unlock()
+	if resp.Bundle == nil {
+		return
 	}
+
+	s.setBundleCacheEntry(req.TrustDomainId, resp.Bundle)
 
 	return
 }
@@ -476,13 +469,4 @@ func (s *Shim) updateBundle(ctx context.Context,
 func bundleKey(id string) string {
 	// e.g. "B|spiffie://example.com"
 	return fmt.Sprintf("%s%s", bundlePrefix, id)
-}
-
-// remove the given key from the cache
-func (s *Shim) removeBundleCacheEntry(id string) {
-	if s.cache.bundleCacheEnabled {
-		s.cache.bundleMu.RLock()
-		delete(s.cache.bundles, id)
-		s.cache.bundleMu.RUnlock()
-	}
 }

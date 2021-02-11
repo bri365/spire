@@ -168,6 +168,9 @@ func (s *Shim) DeleteRegistrationEntry(ctx context.Context,
 	// One delete operation for all keys in the transaction
 	tx := []*store.SetRequestElement{{Operation: store.Operation_DELETE, Kvs: del}}
 
+	// Invalidate cache entry here to prevent race condition with async watcher
+	s.removeEntryCacheEntry(e.EntryId)
+
 	_, err = s.Store.Set(ctx, &store.SetRequest{Elements: tx})
 	if err != nil {
 		return nil, err
@@ -184,7 +187,18 @@ func (s *Shim) FetchRegistrationEntry(ctx context.Context,
 		return s.DataStore.FetchRegistrationEntry(ctx, req)
 	}
 
+	entry := s.fetchEntryCacheEntry(req.EntryId)
+	if entry != nil {
+		resp = &datastore.FetchRegistrationEntryResponse{Entry: entry}
+		return
+	}
+
 	resp, _, err = s.fetchEntry(ctx, req)
+	if resp.Entry == nil {
+		return
+	}
+
+	s.setEntryCacheEntry(req.EntryId, entry)
 
 	return
 }
@@ -370,6 +384,9 @@ func (s *Shim) listRegistrationEntries(ctx context.Context, rev int64,
 				continue
 			}
 
+			// TODO fetch these from cache
+			// NOTE: this will involve either adding store version to cache entries or caching
+			// the protobuf response rather than the unmarshalled node
 			res, err := s.Store.Get(ctx, &store.GetRequest{Key: entryKey(id), Revision: rev})
 			if err != nil {
 				return nil, 0, err
@@ -625,6 +642,9 @@ func (s *Shim) UpdateRegistrationEntry(ctx context.Context,
 		tx = append(tx, &store.SetRequestElement{Kvs: del, Operation: store.Operation_DELETE})
 	}
 	tx = append(tx, &store.SetRequestElement{Kvs: put, Operation: store.Operation_PUT})
+
+	// Invalidate cache entry here to prevent race condition with async watcher
+	s.removeEntryCacheEntry(e.EntryId)
 
 	// Submit transaction
 	_, err = s.Store.Set(ctx, &store.SetRequest{Elements: tx})
