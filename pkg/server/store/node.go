@@ -359,16 +359,16 @@ func (s *Shim) listAttestedNodes(ctx context.Context, rev int64,
 		// No filters, get all nodes up to limit
 
 		// Serve from cache if no pagination and no specific store revision are requested
-		if p == nil && rev == 0 && s.cache.bundleCacheEnabled && s.cache.initialized {
-			s.cache.nodeMu.RLock()
-			resp.Nodes = make([]*common.AttestedNode, len(s.cache.nodes))
+		if p == nil && rev == 0 && s.c.bundleCacheEnabled && s.c.initialized {
+			s.c.nodeMu.RLock()
+			resp.Nodes = make([]*common.AttestedNode, len(s.c.nodes))
 			i := 0
-			for _, node := range s.cache.nodes {
+			for _, node := range s.c.nodes {
 				resp.Nodes[i] = node
 				i++
 			}
-			s.cache.nodeMu.RUnlock()
-			return resp, s.cache.nodeStoreRevision, nil
+			s.c.nodeMu.RUnlock()
+			return resp, s.c.nodeStoreRevision, nil
 		}
 
 		end := allNodes

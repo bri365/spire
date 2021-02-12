@@ -32,7 +32,7 @@ type Shim struct {
 
 	Log hclog.Logger
 
-	cache Cache
+	c     Cache
 	clock clock.Clock
 	cfg   *Configuration
 }
@@ -114,7 +114,7 @@ var (
 func New(ds datastore.DataStore, st store.Store, logger hclog.Logger,
 	cfg *Configuration, etcd *clientv3.Client) (*Shim, error) {
 	store := &Shim{DataStore: ds, Store: st, Log: logger, cfg: cfg, clock: clock.New()}
-	store.cache = NewCache(cfg)
+	store.c = NewCache(cfg)
 	store.Etcd = etcd
 	if err := store.Initialize(); err != nil {
 		return nil, err

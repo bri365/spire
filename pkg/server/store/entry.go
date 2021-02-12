@@ -415,16 +415,16 @@ func (s *Shim) listRegistrationEntries(ctx context.Context, rev int64,
 		// No filters, get all registered entries up to limit
 
 		// Serve from cache if no pagination and no specific store revision are requested
-		if p == nil && rev == 0 && s.cache.bundleCacheEnabled && s.cache.initialized {
-			s.cache.entryMu.RLock()
-			resp.Entries = make([]*common.RegistrationEntry, len(s.cache.entries))
+		if p == nil && rev == 0 && s.c.bundleCacheEnabled && s.c.initialized {
+			s.c.entryMu.RLock()
+			resp.Entries = make([]*common.RegistrationEntry, len(s.c.entries))
 			i := 0
-			for _, entry := range s.cache.entries {
+			for _, entry := range s.c.entries {
 				resp.Entries[i] = entry
 				i++
 			}
-			s.cache.entryMu.RUnlock()
-			return resp, s.cache.entryStoreRevision, nil
+			s.c.entryMu.RUnlock()
+			return resp, s.c.entryStoreRevision, nil
 		}
 
 		res, err := s.Store.Get(ctx, &store.GetRequest{Key: key, End: allEntries, Limit: limit, Revision: rev})

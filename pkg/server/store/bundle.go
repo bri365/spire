@@ -301,16 +301,16 @@ func (s *Shim) listBundles(ctx context.Context, rev int64,
 	resp := &datastore.ListBundlesResponse{}
 
 	// Serve from cache if no pagination and no specific store revision are requested
-	if p == nil && rev == 0 && s.cache.bundleCacheEnabled && s.cache.initialized {
-		s.cache.bundleMu.RLock()
-		resp.Bundles = make([]*common.Bundle, len(s.cache.bundles))
+	if p == nil && rev == 0 && s.c.bundleCacheEnabled && s.c.initialized {
+		s.c.bundleMu.RLock()
+		resp.Bundles = make([]*common.Bundle, len(s.c.bundles))
 		i := 0
-		for _, bundle := range s.cache.bundles {
+		for _, bundle := range s.c.bundles {
 			resp.Bundles[i] = bundle
 			i++
 		}
-		s.cache.bundleMu.RUnlock()
-		return resp, s.cache.bundleStoreRevision, nil
+		s.c.bundleMu.RUnlock()
+		return resp, s.c.bundleStoreRevision, nil
 	}
 
 	res, err := s.Store.Get(ctx, &store.GetRequest{Key: key, End: end, Limit: limit, Revision: rev})
