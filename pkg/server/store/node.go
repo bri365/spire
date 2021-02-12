@@ -201,7 +201,7 @@ func (s *Shim) ListAttestedNodes(ctx context.Context,
 
 // listAttestedNodes lists all attested nodes, optionally filtered and/or paginated.
 // Store revision is accepted and returned for consistency across paginated calls.
-func (s *Shim) listAttestedNodes(ctx context.Context, rev int64,
+func (s *Shim) listAttestedNodes(ctx context.Context, revision int64,
 	req *datastore.ListAttestedNodesRequest) (*datastore.ListAttestedNodesResponse, int64, error) {
 
 	if req.Pagination != nil && req.Pagination.PageSize == 0 {
@@ -211,13 +211,16 @@ func (s *Shim) listAttestedNodes(ctx context.Context, rev int64,
 		return nil, 0, status.Error(codes.InvalidArgument, "cannot list by empty selectors set")
 	}
 
-	// Get the current store revision for use in subsequent calls to ensure
-	// transactional consistency of all item and index read operations.
-	res, err := s.Store.Get(ctx, &store.GetRequest{Key: nodePrefix, End: allNodes, Limit: 1})
-	if err != nil {
-		return nil, 0, err
+	// If specific rev not requested, get the current store revision for use in subsequent calls
+	// to ensure transactional consistency of index read operations.
+	var rev int64
+	if revision == 0 {
+		res, err := s.Store.Get(ctx, &store.GetRequest{Key: nodePrefix, End: allNodes, Limit: 1})
+		if err != nil {
+			return nil, 0, err
+		}
+		rev = res.Revision
 	}
-	rev = res.Revision
 
 	// A collection of IDs for the filtered results - maps make intersection easier
 	// NOTE: for performance reasons, organize the following filters with smallest expected results first
