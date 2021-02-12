@@ -9,18 +9,44 @@ import (
 	"time"
 
 	"github.com/golang/protobuf/proto"
-	"github.com/hashicorp/go-hclog"
 	"github.com/roguesoftware/etcd/clientv3"
 	"github.com/spiffe/spire/pkg/server/plugin/datastore"
 	"github.com/spiffe/spire/proto/spire/common"
 )
 
-// Cache represents the in-memory cache for Store object groups
+// Cache represents the in-memory cache for Store objects.
+// The cache is implemented as separate sections for each object type.
+// As reads are expected to significantly outweight writes, cache segments are
+// protected with a RWMutex - allowing multiple parallel read operations.
+//
+// The cache is loaded from the backing store at startup and maintained through
+// watch functions that stream backend write events (create, delete, update).
+// For etcd, the watch feature is builtin. For other KV stores and SQL databases,
+// the watch feature may be implemented in an event table, and polling the backend
+// store revision or another lightweight change indicator.
+//
+// The cached elements are stored in unordered maps, indexed by object ID.
+// If order is important, an index array of ID strings can be maintained with
+// something like the following referenced in the load and watch functions.
+//
+// func insert(ss []string, s string) []string {
+//     i := sort.SearchStrings(ss, s)
+//     ss = append(ss, "")
+//     copy(ss[i+1:], ss[i:])
+//     ss[i] = s
+//     return ss
+// }
+//
+// func remove(ss []string, s string) []string {
+//     i := sort.SearchStrings(ss, s)
+//     if ss[i] != s { return ss } // or return error
+//     return append(ss[:i], ss[i+1:]...)
+// }
+//
 type Cache struct {
-	datastore.DataStore
-
-	log        hclog.Logger
-	hbInterval time.Duration
+	// Interval in seconds between server heartbeat messages
+	hbInterval  time.Duration
+	initialized bool
 
 	bundleMu            sync.RWMutex
 	bundleCacheEnabled  bool
@@ -55,10 +81,8 @@ const (
 )
 
 // NewCache returns an initialized cache object.
-func NewCache(cfg *Configuration, logger hclog.Logger) Cache {
+func NewCache(cfg *Configuration) Cache {
 	return Cache{
-		log: logger,
-
 		bundles: map[string]*common.Bundle{},
 		entries: map[string]*common.RegistrationEntry{},
 		nodes:   map[string]*common.AttestedNode{},
@@ -116,8 +140,8 @@ func (s *Shim) Initialize() error {
 		go s.watchTokens(rev + 1)
 	}
 
-	// Start server heartbeat routines
-	s.hbStart()
+	s.cache.initialized = true
+	s.startHeartbeatService()
 
 	// TODO handle exit conditions from the five previous routines
 
@@ -418,10 +442,12 @@ func (s *Shim) watchBundles(rev int64) error {
 			if e.Type == watchDelete {
 				s.cache.bundleMu.Lock()
 				delete(s.cache.bundles, bundle.TrustDomainId)
+				s.cache.bundleStoreRevision = e.Kv.ModRevision
 				s.cache.bundleMu.Unlock()
 			} else if e.Type == watchUpdate {
 				s.cache.bundleMu.Lock()
 				s.cache.bundles[bundle.TrustDomainId] = bundle
+				s.cache.bundleStoreRevision = e.Kv.ModRevision
 				s.cache.bundleMu.Unlock()
 			} else {
 				s.Log.Error(fmt.Sprintf("Unknown watch event %v", e))
@@ -468,9 +494,19 @@ func (s *Shim) watchEntries(rev int64) error {
 				s.Log.Error(fmt.Sprintf("%v on %v", err, e.Kv.Value))
 			}
 
-			s.cache.entryMu.Lock()
-			s.cache.entries[entry.EntryId] = entry
-			s.cache.entryMu.Unlock()
+			if e.Type == watchDelete {
+				s.cache.entryMu.Lock()
+				delete(s.cache.entries, entry.EntryId)
+				s.cache.entryStoreRevision = e.Kv.ModRevision
+				s.cache.entryMu.Unlock()
+			} else if e.Type == watchUpdate {
+				s.cache.entryMu.Lock()
+				s.cache.entries[entry.EntryId] = entry
+				s.cache.entryStoreRevision = e.Kv.ModRevision
+				s.cache.entryMu.Unlock()
+			} else {
+				s.Log.Error(fmt.Sprintf("Unknown watch event %v", e))
+			}
 		}
 	}
 
@@ -513,9 +549,19 @@ func (s *Shim) watchNodes(rev int64) error {
 				s.Log.Error(fmt.Sprintf("%v on %v", err, e.Kv.Value))
 			}
 
-			s.cache.nodeMu.Lock()
-			s.cache.nodes[node.SpiffeId] = node
-			s.cache.nodeMu.Unlock()
+			if e.Type == watchDelete {
+				s.cache.nodeMu.Lock()
+				delete(s.cache.nodes, node.SpiffeId)
+				s.cache.nodeStoreRevision = e.Kv.ModRevision
+				s.cache.nodeMu.Unlock()
+			} else if e.Type == watchUpdate {
+				s.cache.nodeMu.Lock()
+				s.cache.nodes[node.SpiffeId] = node
+				s.cache.nodeStoreRevision = e.Kv.ModRevision
+				s.cache.nodeMu.Unlock()
+			} else {
+				s.Log.Error(fmt.Sprintf("Unknown watch event %v", e))
+			}
 		}
 	}
 
@@ -558,9 +604,19 @@ func (s *Shim) watchTokens(rev int64) error {
 				s.Log.Error(fmt.Sprintf("%v on %v", err, e.Kv.Value))
 			}
 
-			s.cache.tokenMu.Lock()
-			s.cache.tokens[token.Token] = token
-			s.cache.tokenMu.Unlock()
+			if e.Type == watchDelete {
+				s.cache.tokenMu.Lock()
+				delete(s.cache.tokens, token.Token)
+				s.cache.tokenStoreRevision = e.Kv.ModRevision
+				s.cache.tokenMu.Unlock()
+			} else if e.Type == watchUpdate {
+				s.cache.tokenMu.Lock()
+				s.cache.tokens[token.Token] = token
+				s.cache.tokenStoreRevision = e.Kv.ModRevision
+				s.cache.tokenMu.Unlock()
+			} else {
+				s.Log.Error(fmt.Sprintf("Unknown watch event %v", e))
+			}
 		}
 	}
 
@@ -569,8 +625,15 @@ func (s *Shim) watchTokens(rev int64) error {
 	return nil
 }
 
-// Initialize heartbeat monitoring
-func (s *Shim) hbStart() {
+// startHeartbeatService initializes inter- and intra-server heartbeat monitoring.
+// Heartbeats are short-lived records in the store PUT by servers and
+// responded to by all other servers.
+// Heartbeat keys include originator and responder IDs and the value is
+// a timestamp from the originator. In this way, servers can track the
+// latency from database write to async watch update across servers and time.
+// TODO use heartbeat data to modulate write response time to ensure (improve)
+// inter-server cache coherency.
+func (s *Shim) startHeartbeatService() {
 	// Secure a unique store revision with an empty heartbeat
 	ctx := context.TODO()
 	rev, err := s.sendHB(ctx, "", "", 1)

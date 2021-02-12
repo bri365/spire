@@ -152,7 +152,7 @@ func (s *PluginSuite) newPlugin() store.Plugin {
 		client_cert_path = "/Users/brian/Dev/scytale/performance-tests/etcd/tf-etcd-vsphere/certs/client.pem"
 		client_key_path = "/Users/brian/Dev/scytale/performance-tests/etcd/tf-etcd-vsphere/certs/client-key.pem"
 		heartbeat_interval = 0
-		write_response_delay = 0
+		write_response_delay = 20
 		`,
 	})
 	s.Require().NoError(err)

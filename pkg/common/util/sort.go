@@ -28,6 +28,21 @@ func DedupRegistrationEntries(entries []*common.RegistrationEntry) []*common.Reg
 	return deduped
 }
 
+func SortBundles(bundles []*common.Bundle) {
+	sort.Slice(bundles, func(i, j int) bool {
+		return compareBundles(bundles[i], bundles[j]) < 0
+	})
+}
+
+func compareBundles(a, b *common.Bundle) int {
+	c := strings.Compare(a.TrustDomainId, b.TrustDomainId)
+	if c != 0 {
+		return c
+	}
+
+	return 0
+}
+
 func SortRegistrationEntries(entries []*common.RegistrationEntry) {
 	// first, sort the selectors for each entry, since the registration
 	// entry comparison relies on them being sorted

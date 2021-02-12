@@ -246,12 +246,12 @@ func (s *Shim) fetchBundle(ctx context.Context,
 	resp := &datastore.FetchBundleResponse{}
 	if len(res.Kvs) == 1 {
 		ver = res.Kvs[0].Version
-		bundle := &common.Bundle{}
-		err = proto.Unmarshal(res.Kvs[0].Value, bundle)
+		b := &common.Bundle{}
+		err = proto.Unmarshal(res.Kvs[0].Value, b)
 		if err != nil {
 			return nil, 0, err
 		}
-		resp.Bundle = bundle
+		resp.Bundle = b
 	} else if len(res.Kvs) > 1 {
 		return resp, 0, fmt.Errorf("More than one bundle for %s", req.TrustDomainId)
 	}
@@ -298,13 +298,27 @@ func (s *Shim) listBundles(ctx context.Context, rev int64,
 		}
 	}
 
+	resp := &datastore.ListBundlesResponse{}
+
+	// Serve from cache if no pagination and no specific store revision are requested
+	if p == nil && rev == 0 && s.cache.bundleCacheEnabled && s.cache.initialized {
+		s.cache.bundleMu.RLock()
+		resp.Bundles = make([]*common.Bundle, len(s.cache.bundles))
+		i := 0
+		for _, bundle := range s.cache.bundles {
+			resp.Bundles[i] = bundle
+			i++
+		}
+		s.cache.bundleMu.RUnlock()
+		return resp, s.cache.bundleStoreRevision, nil
+	}
+
 	res, err := s.Store.Get(ctx, &store.GetRequest{Key: key, End: end, Limit: limit, Revision: rev})
 	if err != nil {
 		return nil, 0, err
 	}
 
 	lastKey := ""
-	resp := &datastore.ListBundlesResponse{}
 	for _, kv := range res.Kvs {
 		b := &common.Bundle{}
 		err = proto.Unmarshal(kv.Value, b)

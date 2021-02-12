@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/spiffe/spire/pkg/common/bundleutil"
-
+	"github.com/spiffe/spire/pkg/common/util"
 	"github.com/spiffe/spire/pkg/server/plugin/datastore"
 	"github.com/spiffe/spire/proto/spire/common"
 	"github.com/spiffe/spire/test/spiretest"
@@ -301,6 +301,8 @@ func (s *PluginSuite) TestListBundlesWithPagination() {
 			}
 			//s.T().Logf("response: %v", resp)
 			//s.T().Logf("expected: %v", expectedResponse)
+			util.SortBundles(expectedResponse.Bundles)
+			util.SortBundles(resp.Bundles)
 			spiretest.RequireProtoEqual(t, expectedResponse, resp)
 		})
 	}
