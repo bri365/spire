@@ -161,18 +161,20 @@ func (s *Shim) loadBundles(revision int64) (int64, error) {
 		if err != nil {
 			return 0, err
 		}
+
 		if rev == 0 {
 			// First read returns the current store revision if requested revision is 0
 			rev = r
 		} else if r != rev {
-			// Requested store version was honored - something wrong with etcd
-			return 0, fmt.Errorf("Revision returned (%d) does not match requested (%d)", r, rev)
+			// Requested store revision was not honored - something wrong with etcd?
+			return 0, fmt.Errorf("LB revision returned (%d) does not match requested (%d)", r, rev)
 		}
 
 		count := len(br.Bundles)
 		token = br.Pagination.Token
 		s.Log.Debug(fmt.Sprintf("load bundles count: %d, token: %s, rev: %d", count, token, rev))
-		if token == "" || count == 0 {
+
+		if count == 0 {
 			break
 		}
 
@@ -227,18 +229,20 @@ func (s *Shim) loadEntries(revision int64) (int64, error) {
 		if err != nil {
 			return 0, err
 		}
+
 		if rev == 0 {
 			// First read returns the current store revision if requested revision is 0
 			rev = r
 		} else if r != rev {
-			// Requested store version was honored - something wrong with etcd
-			return 0, fmt.Errorf("Revision returned (%d) does not match requested (%d)", r, rev)
+			// Requested store version was not honored - something wrong with etcd?
+			return 0, fmt.Errorf("LE revision returned (%d) does not match requested (%d)", r, rev)
 		}
 
 		count := len(er.Entries)
 		token = er.Pagination.Token
 		s.Log.Debug(fmt.Sprintf("load entries count: %d, token: %s, rev: %d", count, token, rev))
-		if token == "" || count == 0 {
+
+		if count == 0 {
 			break
 		}
 
@@ -293,18 +297,20 @@ func (s *Shim) loadNodes(revision int64) (int64, error) {
 		if err != nil {
 			return 0, err
 		}
+
 		if rev == 0 {
 			// First read returns the current store revision if requested revision is 0
 			rev = r
 		} else if r != rev {
-			// Requested store version was honored - something wrong with etcd
-			return 0, fmt.Errorf("Revision returned (%d) does not match requested (%d)", r, rev)
+			// Requested store version was not honored - something wrong with etcd?
+			return 0, fmt.Errorf("LN revision returned (%d) does not match requested (%d)", r, rev)
 		}
 
 		count := len(nr.Nodes)
 		token = nr.Pagination.Token
 		s.Log.Debug(fmt.Sprintf("load nodes count: %d, token: %s, rev: %d", count, token, rev))
-		if token == "" || count == 0 {
+
+		if count == 0 {
 			break
 		}
 
@@ -347,24 +353,32 @@ func (s *Shim) removeNodeCacheEntry(id string) {
 }
 
 // loadTokens performs the initial cache load for join tokens.
-func (s *Shim) loadTokens(revision int64) (rev int64, err error) {
+func (s *Shim) loadTokens(revision int64) (int64, error) {
 	s.c.tokenMu.Lock()
 	defer s.c.tokenMu.Unlock()
 
-	tr := &datastore.ListJoinTokensResponse{}
-	rev = revision
+	rev := revision
 	token := ""
 	for {
-		tr, rev, err = s.listJoinTokens(context.TODO(), rev, &datastore.ListJoinTokensRequest{
+		tr, r, err := s.listJoinTokens(context.TODO(), rev, &datastore.ListJoinTokensRequest{
 			Pagination: &datastore.Pagination{Token: token, PageSize: loadPageSize}})
 		if err != nil {
 			return 0, err
 		}
 
+		if rev == 0 {
+			// First read returns the current store revision if requested revision is 0
+			rev = r
+		} else if r != rev {
+			// Requested store version was not honored - something wrong with etcd?
+			return 0, fmt.Errorf("LT revision returned (%d) does not match requested (%d)", r, rev)
+		}
+
 		count := len(tr.JoinTokens)
 		token = tr.Pagination.Token
 		s.Log.Debug(fmt.Sprintf("load tokens count: %d, token: %s, rev: %d", count, token, rev))
-		if token == "" || count == 0 {
+
+		if count == 0 {
 			break
 		}
 
@@ -375,7 +389,7 @@ func (s *Shim) loadTokens(revision int64) (rev int64, err error) {
 
 	s.c.tokenStoreRevision = rev
 
-	return
+	return rev, nil
 }
 
 // Add or update the given join token in the cache

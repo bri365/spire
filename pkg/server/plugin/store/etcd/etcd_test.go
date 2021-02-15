@@ -108,7 +108,7 @@ func (s *PluginSuite) SetupTest() {
 	cfg := &ss.Configuration{}
 	s.shim, err = ss.New(nil, s.st, ssLogger, cfg, s.etcdPlugin.Etcd)
 	if err != nil {
-		s.T().Log(err)
+		s.T().Fatal(err)
 	}
 
 	// delete all keys from the store
@@ -117,7 +117,7 @@ func (s *PluginSuite) SetupTest() {
 		End: "z",
 	})
 	if err != nil {
-		s.T().Log(err)
+		s.T().Fatal(err)
 	}
 
 	if len(res.Kvs) > 0 {

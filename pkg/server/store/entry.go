@@ -243,7 +243,7 @@ func (s *Shim) ListRegistrationEntries(ctx context.Context,
 
 // listRegistrationEntries lists all registrations (pagination available)
 // Store revision is accepted and returned for consistency across paginated calls.
-func (s *Shim) listRegistrationEntries(ctx context.Context, revision int64,
+func (s *Shim) listRegistrationEntries(ctx context.Context, rev int64,
 	req *datastore.ListRegistrationEntriesRequest) (*datastore.ListRegistrationEntriesResponse, int64, error) {
 
 	if req.Pagination != nil && req.Pagination.PageSize == 0 {
@@ -255,8 +255,7 @@ func (s *Shim) listRegistrationEntries(ctx context.Context, revision int64,
 
 	// If specific rev not requested, get the current store revision for use in subsequent calls
 	// to ensure transactional consistency of index read operations.
-	var rev int64
-	if revision == 0 {
+	if rev == 0 {
 		res, err := s.Store.Get(ctx, &store.GetRequest{Key: entryPrefix, End: allEntries, Limit: 1})
 		if err != nil {
 			return nil, 0, err
@@ -264,7 +263,7 @@ func (s *Shim) listRegistrationEntries(ctx context.Context, revision int64,
 		rev = res.Revision
 	}
 
-	// A collection of IDs for the filtered results - maps make intersection easier
+	// A collection of IDs for the filtered results - boolean maps make intersection easier to read
 	// NOTE: for performance reasons, organize the following filters with smallest expected results first
 	idSets := []map[string]bool{}
 
@@ -339,12 +338,12 @@ func (s *Shim) listRegistrationEntries(ctx context.Context, revision int64,
 	count := len(idSets)
 	if count > 1 {
 		// intersect each additional query set into the first set
-		// resulting in a single list of IDs meeting all filter criteria
+		// resulting in a single set of IDs meeting all filter criteria
 		for i := 1; i < count; i++ {
 			tmp := map[string]bool{}
 			for id := range idSets[0] {
-				// Add item if it appears in both maps
-				if _, ok := idSets[i][id]; ok {
+				// Add item if it appears in both sets
+				if idSets[i][id] {
 					tmp[id] = true
 				}
 			}
@@ -447,10 +446,9 @@ func (s *Shim) listRegistrationEntries(ctx context.Context, revision int64,
 
 	if p != nil {
 		p.Token = ""
-		// Set token only if there may be more items than returned
-		// if len(resp.Entries) == int(p.PageSize) {
-
-		// NOTE: the SQL implementation appears to set the token on the last page regardless
+		// Note: In the event the total number of items exactly equals the page size,
+		// there may be one extra list call that returns no items. This fact is used
+		// in other parts of the code so it should not be optimized without consideration.
 		if len(resp.Entries) > 0 {
 			p.Token = lastKey
 		}

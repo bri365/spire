@@ -191,8 +191,10 @@ func (s *Shim) listJoinTokens(ctx context.Context, rev int64,
 
 	if p != nil {
 		p.Token = ""
-		// Set token only if there may be more tokens than returned
-		if len(resp.JoinTokens) == int(p.PageSize) {
+		// Note: In the event the total number of items exactly equals the page size,
+		// there may be one extra list call that returns no items. This fact is used
+		// in other parts of the code so it should not be optimized without consideration.
+		if len(resp.JoinTokens) > 0 {
 			p.Token = lastKey
 		}
 		resp.Pagination = p

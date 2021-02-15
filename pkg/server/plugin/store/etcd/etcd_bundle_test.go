@@ -25,6 +25,7 @@ func (s *PluginSuite) TestBundleCRUD() {
 	fresp, err := s.shim.FetchBundle(ctx, &datastore.FetchBundleRequest{TrustDomainId: "spiffe://foo"})
 	s.Require().NoError(err)
 	s.Require().NotNil(fresp)
+	s.T().Logf("bundle %v", fresp.Bundle)
 	s.Require().Nil(fresp.Bundle)
 
 	// update non-existent
@@ -222,7 +223,7 @@ func (s *PluginSuite) TestListBundlesWithPagination() {
 			},
 			expectedList: []*common.Bundle{bundle1, bundle2, bundle3, bundle4},
 			expectedPagination: &datastore.Pagination{
-				Token:    "",
+				Token:    fmt.Sprintf("B|%s", bundle4.TrustDomainId),
 				PageSize: 5,
 			},
 		},

@@ -201,7 +201,7 @@ func (s *Shim) ListAttestedNodes(ctx context.Context,
 
 // listAttestedNodes lists all attested nodes, optionally filtered and/or paginated.
 // Store revision is accepted and returned for consistency across paginated calls.
-func (s *Shim) listAttestedNodes(ctx context.Context, revision int64,
+func (s *Shim) listAttestedNodes(ctx context.Context, rev int64,
 	req *datastore.ListAttestedNodesRequest) (*datastore.ListAttestedNodesResponse, int64, error) {
 
 	if req.Pagination != nil && req.Pagination.PageSize == 0 {
@@ -213,8 +213,7 @@ func (s *Shim) listAttestedNodes(ctx context.Context, revision int64,
 
 	// If a specific store revision was not requested, get the current store revision for use in
 	// subsequent calls to ensure transactional consistency of index read operations.
-	var rev int64
-	if revision == 0 {
+	if rev == 0 {
 		res, err := s.Store.Get(ctx, &store.GetRequest{Key: nodePrefix, End: allNodes, Limit: 1})
 		if err != nil {
 			return nil, 0, err
@@ -278,7 +277,7 @@ func (s *Shim) listAttestedNodes(ctx context.Context, revision int64,
 
 	count := len(idSets)
 	if count > 1 {
-		// intersect additional query sets into the first one
+		// intersect each additional query set into the first set
 		// TODO extract this into a shared utility library
 		for i := 1; i < count; i++ {
 			tmp := map[string]bool{}
@@ -406,10 +405,9 @@ func (s *Shim) listAttestedNodes(ctx context.Context, revision int64,
 
 	if p != nil {
 		p.Token = ""
-		// Set token only if there may be more items than returned
-		// if len(resp.Nodes) == int(p.PageSize) {
-
-		// NOTE: the SQL implementation appears to set the token on the last page regardless
+		// Note: In the event the total number of items exactly equals the page size,
+		// there may be one extra list call that returns no items. This fact is used
+		// in other parts of the code so it should not be optimized without consideration.
 		if len(resp.Nodes) > 0 {
 			p.Token = lastKey
 		}
