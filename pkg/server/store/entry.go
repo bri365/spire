@@ -243,7 +243,7 @@ func (s *Shim) ListRegistrationEntries(ctx context.Context,
 
 // listRegistrationEntries lists all registrations (pagination available)
 // Store revision is accepted and returned for consistency across paginated calls.
-func (s *Shim) listRegistrationEntries(ctx context.Context, rev int64,
+func (s *Shim) listRegistrationEntries(ctx context.Context, revision int64,
 	req *datastore.ListRegistrationEntriesRequest) (*datastore.ListRegistrationEntriesResponse, int64, error) {
 
 	if req.Pagination != nil && req.Pagination.PageSize == 0 {
@@ -255,6 +255,7 @@ func (s *Shim) listRegistrationEntries(ctx context.Context, rev int64,
 
 	// If specific rev not requested, get the current store revision for use in subsequent calls
 	// to ensure transactional consistency of index read operations.
+	rev := revision
 	if rev == 0 {
 		res, err := s.Store.Get(ctx, &store.GetRequest{Key: entryPrefix, End: allEntries, Limit: 1})
 		if err != nil {
@@ -416,19 +417,25 @@ func (s *Shim) listRegistrationEntries(ctx context.Context, rev int64,
 	} else {
 		// No filters, get all registered entries up to limit
 
-		// Serve from cache if no pagination and no specific store revision are requested
-		if p == nil && rev == 0 && s.c.bundleCacheEnabled && s.c.initialized {
-			s.c.entryMu.RLock()
-			resp.Entries = make([]*common.RegistrationEntry, len(s.c.entries))
-			i := 0
-			for _, entry := range s.c.entries {
-				resp.Entries[i] = entry
-				i++
+		// Serve from cache if available, not paginated, and rev matches or was not specified
+		if s.c.entryCacheEnabled && s.c.initialized {
+			s.c.mu.RLock()
+			r := s.c.storeRevision
+			if p == nil && (rev == 0 || rev == r) {
+				resp.Entries = make([]*common.RegistrationEntry, len(s.c.entries))
+				i := 0
+				for _, entry := range s.c.entries {
+					resp.Entries[i] = entry
+					i++
+				}
+				s.c.mu.RUnlock()
+				return resp, r, nil
 			}
-			s.c.entryMu.RUnlock()
-			return resp, s.c.entryStoreRevision, nil
+			s.c.mu.RUnlock()
 		}
 
+		// Pagination requested or cache does not support the requested rev
+		// TODO pagination support requires a sorted array of IDs be maintained with the cache entries.
 		res, err := s.Store.Get(ctx, &store.GetRequest{Key: key, End: allEntries, Limit: limit, Revision: rev})
 		if err != nil {
 			return nil, 0, err
@@ -735,6 +742,15 @@ func (s *Shim) newRegistrationEntryID() (string, error) {
 func entryKey(id string) string {
 	// e.g. "E|5fee2e4a-1fe3-4bf3-b4f0-55eaf268c12a"
 	return fmt.Sprintf("%s%s", entryPrefix, id)
+}
+
+// entryIDFromKey returns the registered entry id from the given entry key.
+func entryIDFromKey(key string) (string, error) {
+	items := strings.Split(key, delim)
+	if len(items) != 2 || items[0] != entryKeyID {
+		return "", fmt.Errorf("invalid entry key: %s", key)
+	}
+	return items[1], nil
 }
 
 // entryExpKey returns a string formatted key for a registered entry indexed by expiry in seconds.

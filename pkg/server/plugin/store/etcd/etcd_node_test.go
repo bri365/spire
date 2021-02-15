@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spiffe/spire/pkg/common/util"
 	"github.com/spiffe/spire/pkg/server/plugin/datastore"
 	"github.com/spiffe/spire/proto/spire/common"
 	"github.com/spiffe/spire/test/spiretest"
@@ -233,9 +234,12 @@ func (s *PluginSuite) TestFetchAttestedNodesWithPagination() {
 		expectedErr        string
 	}{
 		{
-			name:         "fetch without pagination",
-			req:          &datastore.ListAttestedNodesRequest{},
-			expectedList: []*common.AttestedNode{aNode1, aNode2, aNode3, aNode4, aNode5},
+			name: "fetch without pagination",
+			req:  &datastore.ListAttestedNodesRequest{},
+			// TODO expectedList: []*common.AttestedNode{aNode1, aNode2, aNode3, aNode4, aNode5},
+			expectedList: []*common.AttestedNode{
+				aNode1WithSelectors, aNode2WithSelectors, aNode3WithSelectors,
+				aNode4WithSelectors, aNode5},
 		},
 		{
 			name: "pagination without token",
@@ -615,6 +619,8 @@ func (s *PluginSuite) TestFetchAttestedNodesWithPagination() {
 				Nodes:      test.expectedList,
 				Pagination: test.expectedPagination,
 			}
+			util.SortAttestedNodes(expectedResponse.Nodes)
+			util.SortAttestedNodes(resp.Nodes)
 			spiretest.RequireProtoEqual(t, expectedResponse, resp)
 		})
 	}

@@ -43,6 +43,19 @@ func compareBundles(a, b *common.Bundle) int {
 	return 0
 }
 
+func SortAttestedNodes(nodes []*common.AttestedNode) {
+	// first, sort the selectors for each entry, since the node
+	// entry comparison relies on them being sorted
+	for _, node := range nodes {
+		SortSelectors(node.Selectors)
+	}
+
+	// second, sort the nodes
+	sort.Slice(nodes, func(i, j int) bool {
+		return compareAttestedNodes(nodes[i], nodes[j]) < 0
+	})
+}
+
 func SortRegistrationEntries(entries []*common.RegistrationEntry) {
 	// first, sort the selectors for each entry, since the registration
 	// entry comparison relies on them being sorted
@@ -60,6 +73,15 @@ func SortSelectors(selectors []*common.Selector) {
 	sort.Slice(selectors, func(i, j int) bool {
 		return compareSelector(selectors[i], selectors[j]) < 0
 	})
+}
+
+func compareAttestedNodes(a, b *common.AttestedNode) int {
+	c := strings.Compare(a.SpiffeId, b.SpiffeId)
+	if c != 0 {
+		return c
+	}
+
+	return compareSelectors(a.Selectors, b.Selectors)
 }
 
 func compareRegistrationEntries(a, b *common.RegistrationEntry) int {

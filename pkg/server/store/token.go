@@ -234,6 +234,15 @@ func tokenKey(id string) string {
 	return fmt.Sprintf("%s%s", tokenPrefix, id)
 }
 
+// tokenIDFromKey returns the token id from the given token key.
+func tokenIDFromKey(key string) (string, error) {
+	items := strings.Split(key, delim)
+	if len(items) != 2 || items[0] != tokenKeyID {
+		return "", fmt.Errorf("invalid token key: %s", key)
+	}
+	return items[1], nil
+}
+
 // tokenExpKey returns a string formatted key for a join token indexed by expiry in seconds.
 // e.g. "TI|EXP|1611907252|abcd1234"
 // NOTE: %d without leading zeroes for time.Unix will work for the next ~250 years

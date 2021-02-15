@@ -201,7 +201,7 @@ func (s *Shim) ListAttestedNodes(ctx context.Context,
 
 // listAttestedNodes lists all attested nodes, optionally filtered and/or paginated.
 // Store revision is accepted and returned for consistency across paginated calls.
-func (s *Shim) listAttestedNodes(ctx context.Context, rev int64,
+func (s *Shim) listAttestedNodes(ctx context.Context, revision int64,
 	req *datastore.ListAttestedNodesRequest) (*datastore.ListAttestedNodesResponse, int64, error) {
 
 	if req.Pagination != nil && req.Pagination.PageSize == 0 {
@@ -213,6 +213,7 @@ func (s *Shim) listAttestedNodes(ctx context.Context, rev int64,
 
 	// If a specific store revision was not requested, get the current store revision for use in
 	// subsequent calls to ensure transactional consistency of index read operations.
+	rev := revision
 	if rev == 0 {
 		res, err := s.Store.Get(ctx, &store.GetRequest{Key: nodePrefix, End: allNodes, Limit: 1})
 		if err != nil {
@@ -370,21 +371,26 @@ func (s *Shim) listAttestedNodes(ctx context.Context, rev int64,
 	} else {
 		// No filters, get all nodes up to limit
 
-		// Serve from cache if no pagination and no specific store revision are requested
-		if p == nil && rev == 0 && s.c.bundleCacheEnabled && s.c.initialized {
-			s.c.nodeMu.RLock()
-			resp.Nodes = make([]*common.AttestedNode, len(s.c.nodes))
-			i := 0
-			for _, node := range s.c.nodes {
-				resp.Nodes[i] = node
-				i++
+		// Serve from cache if available, not paginated, and rev matches or was not specified
+		if s.c.nodeCacheEnabled && s.c.initialized {
+			s.c.mu.RLock()
+			r := s.c.storeRevision
+			if p == nil && (revision == 0 || revision == r) {
+				resp.Nodes = make([]*common.AttestedNode, len(s.c.nodes))
+				i := 0
+				for _, n := range s.c.nodes {
+					resp.Nodes[i] = n
+					i++
+				}
+				s.c.mu.RUnlock()
+				return resp, r, nil
 			}
-			s.c.nodeMu.RUnlock()
-			return resp, s.c.nodeStoreRevision, nil
+			s.c.mu.RUnlock()
 		}
 
-		end := allNodes
-		res, err := s.Store.Get(ctx, &store.GetRequest{Key: key, End: end, Limit: limit, Revision: rev})
+		// Pagination requested or cache does not support the requested rev
+		// TODO pagination support requires a sorted array of IDs be maintained with the cache entries.
+		res, err := s.Store.Get(ctx, &store.GetRequest{Key: key, End: allNodes, Limit: limit, Revision: rev})
 		if err != nil {
 			return nil, 0, err
 		}
@@ -664,6 +670,15 @@ func (s *Shim) SetNodeSelectors(ctx context.Context,
 // e.g. "N|spiffie://example.com/clusterA/nodeN"
 func nodeKey(id string) string {
 	return fmt.Sprintf("%s%s", nodePrefix, id)
+}
+
+// nodeIDFromKey returns the node id from the given node key.
+func nodeIDFromKey(key string) (string, error) {
+	items := strings.Split(key, delim)
+	if len(items) != 2 || items[0] != nodeKeyID {
+		return "", fmt.Errorf("invalid node key: %s", key)
+	}
+	return items[1], nil
 }
 
 // nodeAdtKey returns a string formatted key for an attested node indexed by attestation data type.

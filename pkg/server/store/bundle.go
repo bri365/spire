@@ -4,6 +4,7 @@ package store
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/golang/protobuf/proto"
@@ -300,19 +301,25 @@ func (s *Shim) listBundles(ctx context.Context, rev int64,
 
 	resp := &datastore.ListBundlesResponse{}
 
-	// Serve from cache if no pagination and no specific store revision are requested
-	if p == nil && rev == 0 && s.c.bundleCacheEnabled && s.c.initialized {
-		s.c.bundleMu.RLock()
-		resp.Bundles = make([]*common.Bundle, len(s.c.bundles))
-		i := 0
-		for _, bundle := range s.c.bundles {
-			resp.Bundles[i] = bundle
-			i++
+	// Serve from cache if available, not paginated, and rev matches or was not specified
+	if s.c.initialized && s.c.bundleCacheEnabled {
+		s.c.mu.RLock()
+		r := s.c.storeRevision
+		if p == nil && (rev == 0 || rev == r) {
+			resp.Bundles = make([]*common.Bundle, len(s.c.bundles))
+			i := 0
+			for _, bundle := range s.c.bundles {
+				resp.Bundles[i] = bundle
+				i++
+			}
+			s.c.mu.RUnlock()
+			return resp, r, nil
 		}
-		s.c.bundleMu.RUnlock()
-		return resp, s.c.bundleStoreRevision, nil
+		s.c.mu.RUnlock()
 	}
 
+	// Pagination requested or cache does not support the requested rev
+	// TODO pagination support requires a sorted array of IDs be maintained with the cache entries.
 	res, err := s.Store.Get(ctx, &store.GetRequest{Key: key, End: end, Limit: limit, Revision: rev})
 	if err != nil {
 		return nil, 0, err
@@ -485,4 +492,13 @@ func (s *Shim) updateBundle(ctx context.Context,
 func bundleKey(id string) string {
 	// e.g. "B|spiffie://example.com"
 	return fmt.Sprintf("%s%s", bundlePrefix, id)
+}
+
+// bundleIDFromKey returns the bundle id from the given bundle key.
+func bundleIDFromKey(key string) (string, error) {
+	items := strings.Split(key, delim)
+	if len(items) != 2 || items[0] != bundleKeyID {
+		return "", fmt.Errorf("invalid bundle key: %s", key)
+	}
+	return items[1], nil
 }

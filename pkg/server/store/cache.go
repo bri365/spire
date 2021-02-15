@@ -10,6 +10,7 @@ import (
 
 	"github.com/golang/protobuf/proto"
 	"github.com/roguesoftware/etcd/clientv3"
+	"github.com/roguesoftware/etcd/mvcc/mvccpb"
 	"github.com/spiffe/spire/pkg/server/plugin/datastore"
 	"github.com/spiffe/spire/proto/spire/common"
 )
@@ -45,28 +46,22 @@ import (
 //
 type Cache struct {
 	// Interval in seconds between server heartbeat messages
-	hbInterval  time.Duration
-	initialized bool
+	heartbeatInterval time.Duration
+	initialized       bool
+	mu                sync.RWMutex
+	storeRevision     int64
 
-	bundleMu            sync.RWMutex
-	bundleCacheEnabled  bool
-	bundleStoreRevision int64
-	bundles             map[string]*common.Bundle
+	bundleCacheEnabled bool
+	bundles            map[string]*common.Bundle
 
-	entryMu            sync.RWMutex
-	entryCacheEnabled  bool
-	entryStoreRevision int64
-	entries            map[string]*common.RegistrationEntry
+	entryCacheEnabled bool
+	entries           map[string]*common.RegistrationEntry
 
-	nodeMu            sync.RWMutex
-	nodeCacheEnabled  bool
-	nodeStoreRevision int64
-	nodes             map[string]*common.AttestedNode
+	nodeCacheEnabled bool
+	nodes            map[string]*common.AttestedNode
 
-	tokenMu            sync.RWMutex
-	tokenCacheEnabled  bool
-	tokenStoreRevision int64
-	tokens             map[string]*datastore.JoinToken
+	tokenCacheEnabled bool
+	tokens            map[string]*datastore.JoinToken
 }
 
 // Store cache constants
@@ -93,7 +88,7 @@ func NewCache(cfg *Configuration) Cache {
 		nodeCacheEnabled:   !cfg.DisableNodeCache,
 		tokenCacheEnabled:  !cfg.DisableTokenCache,
 
-		hbInterval: time.Duration(cfg.HeartbeatInterval) * time.Second,
+		heartbeatInterval: time.Duration(cfg.HeartbeatInterval) * time.Second,
 	}
 }
 
@@ -150,8 +145,8 @@ func (s *Shim) Initialize() error {
 
 // loadBundles performs the initial cache load for bundles
 func (s *Shim) loadBundles(revision int64) (int64, error) {
-	s.c.bundleMu.Lock()
-	defer s.c.bundleMu.Unlock()
+	s.c.mu.Lock()
+	defer s.c.mu.Unlock()
 
 	rev := revision
 	token := ""
@@ -183,7 +178,7 @@ func (s *Shim) loadBundles(revision int64) (int64, error) {
 		}
 	}
 
-	s.c.bundleStoreRevision = rev
+	s.c.storeRevision = rev
 
 	return rev, nil
 }
@@ -191,9 +186,9 @@ func (s *Shim) loadBundles(revision int64) (int64, error) {
 // Add or update the given bundle in the cache
 func (s *Shim) setBundleCacheEntry(id string, bundle *common.Bundle) {
 	if s.c.bundleCacheEnabled {
-		s.c.bundleMu.Lock()
+		s.c.mu.Lock()
 		s.c.bundles[id] = bundle
-		s.c.bundleMu.Unlock()
+		s.c.mu.Unlock()
 	}
 }
 
@@ -202,24 +197,24 @@ func (s *Shim) fetchBundleCacheEntry(id string) *common.Bundle {
 	if !s.c.bundleCacheEnabled {
 		return nil
 	}
-	s.c.bundleMu.RLock()
-	defer s.c.bundleMu.RUnlock()
+	s.c.mu.RLock()
+	defer s.c.mu.RUnlock()
 	return s.c.bundles[id]
 }
 
 // Remove the given bundle from the cache
 func (s *Shim) removeBundleCacheEntry(id string) {
 	if s.c.bundleCacheEnabled {
-		s.c.bundleMu.Lock()
+		s.c.mu.Lock()
 		delete(s.c.bundles, id)
-		s.c.bundleMu.Unlock()
+		s.c.mu.Unlock()
 	}
 }
 
 // loadEntries performs the initial cache load for registration entries
 func (s *Shim) loadEntries(revision int64) (int64, error) {
-	s.c.entryMu.Lock()
-	defer s.c.entryMu.Unlock()
+	s.c.mu.Lock()
+	defer s.c.mu.Unlock()
 
 	rev := revision
 	token := ""
@@ -251,7 +246,7 @@ func (s *Shim) loadEntries(revision int64) (int64, error) {
 		}
 	}
 
-	s.c.entryStoreRevision = rev
+	s.c.storeRevision = rev
 
 	return rev, nil
 }
@@ -259,9 +254,9 @@ func (s *Shim) loadEntries(revision int64) (int64, error) {
 // Add or update the given attested entry in the cache
 func (s *Shim) setEntryCacheEntry(id string, entry *common.RegistrationEntry) {
 	if s.c.entryCacheEnabled {
-		s.c.entryMu.Lock()
+		s.c.mu.Lock()
 		s.c.entries[id] = entry
-		s.c.entryMu.Unlock()
+		s.c.mu.Unlock()
 	}
 }
 
@@ -270,24 +265,24 @@ func (s *Shim) fetchEntryCacheEntry(id string) *common.RegistrationEntry {
 	if !s.c.entryCacheEnabled {
 		return nil
 	}
-	s.c.entryMu.RLock()
-	defer s.c.entryMu.RUnlock()
+	s.c.mu.RLock()
+	defer s.c.mu.RUnlock()
 	return s.c.entries[id]
 }
 
 // Remove the given registration entry from the cache
 func (s *Shim) removeEntryCacheEntry(id string) {
 	if s.c.entryCacheEnabled {
-		s.c.entryMu.Lock()
+		s.c.mu.Lock()
 		delete(s.c.entries, id)
-		s.c.entryMu.Unlock()
+		s.c.mu.Unlock()
 	}
 }
 
 // loadNodes performs the initial cache load for attested nodes.
 func (s *Shim) loadNodes(revision int64) (int64, error) {
-	s.c.nodeMu.Lock()
-	defer s.c.nodeMu.Unlock()
+	s.c.mu.Lock()
+	defer s.c.mu.Unlock()
 
 	rev := revision
 	token := ""
@@ -319,7 +314,7 @@ func (s *Shim) loadNodes(revision int64) (int64, error) {
 		}
 	}
 
-	s.c.nodeStoreRevision = rev
+	s.c.storeRevision = rev
 
 	return rev, nil
 }
@@ -327,9 +322,9 @@ func (s *Shim) loadNodes(revision int64) (int64, error) {
 // Add or update the given attested node in the cache
 func (s *Shim) setNodeCacheEntry(id string, node *common.AttestedNode) {
 	if s.c.nodeCacheEnabled {
-		s.c.nodeMu.Lock()
+		s.c.mu.Lock()
 		s.c.nodes[id] = node
-		s.c.nodeMu.Unlock()
+		s.c.mu.Unlock()
 	}
 }
 
@@ -338,24 +333,24 @@ func (s *Shim) fetchNodeCacheEntry(id string) *common.AttestedNode {
 	if !s.c.nodeCacheEnabled {
 		return nil
 	}
-	s.c.nodeMu.RLock()
-	defer s.c.nodeMu.RUnlock()
+	s.c.mu.RLock()
+	defer s.c.mu.RUnlock()
 	return s.c.nodes[id]
 }
 
 // Remove the given attested node from the cache
 func (s *Shim) removeNodeCacheEntry(id string) {
 	if s.c.nodeCacheEnabled {
-		s.c.nodeMu.Lock()
+		s.c.mu.Lock()
 		delete(s.c.nodes, id)
-		s.c.nodeMu.Unlock()
+		s.c.mu.Unlock()
 	}
 }
 
 // loadTokens performs the initial cache load for join tokens.
 func (s *Shim) loadTokens(revision int64) (int64, error) {
-	s.c.tokenMu.Lock()
-	defer s.c.tokenMu.Unlock()
+	s.c.mu.Lock()
+	defer s.c.mu.Unlock()
 
 	rev := revision
 	token := ""
@@ -387,7 +382,7 @@ func (s *Shim) loadTokens(revision int64) (int64, error) {
 		}
 	}
 
-	s.c.tokenStoreRevision = rev
+	s.c.storeRevision = rev
 
 	return rev, nil
 }
@@ -395,9 +390,9 @@ func (s *Shim) loadTokens(revision int64) (int64, error) {
 // Add or update the given join token in the cache
 func (s *Shim) setTokenCacheEntry(id string, token *datastore.JoinToken) {
 	if s.c.tokenCacheEnabled {
-		s.c.tokenMu.Lock()
+		s.c.mu.Lock()
 		s.c.tokens[id] = token
-		s.c.tokenMu.Unlock()
+		s.c.mu.Unlock()
 	}
 }
 
@@ -406,17 +401,17 @@ func (s *Shim) fetchTokenCacheEntry(id string) *datastore.JoinToken {
 	if !s.c.tokenCacheEnabled {
 		return nil
 	}
-	s.c.tokenMu.RLock()
-	defer s.c.tokenMu.RUnlock()
+	s.c.mu.RLock()
+	defer s.c.mu.RUnlock()
 	return s.c.tokens[id]
 }
 
 // Remove the given join token from the cache
 func (s *Shim) removeTokenCacheEntry(id string) {
 	if s.c.tokenCacheEnabled {
-		s.c.tokenMu.Lock()
+		s.c.mu.Lock()
 		delete(s.c.tokens, id)
-		s.c.tokenMu.Unlock()
+		s.c.mu.Unlock()
 	}
 }
 
@@ -444,29 +439,34 @@ func (s *Shim) watchBundles(rev int64) error {
 			continue
 		}
 
+		// Hold the lock for all updates to give other routines the most recent data.
+		s.c.mu.Lock()
+
 		for _, e := range w.Events {
-			s.Log.Debug(fmt.Sprintf("%s %s at %d", e.Type, e.Kv.Key, time.Now().UnixNano()))
+			if e.Type == mvccpb.DELETE {
+				id, err := bundleIDFromKey(string(e.Kv.Key))
+				if err != nil {
+					s.Log.Error(fmt.Sprintf("%s", err))
+				} else {
+					delete(s.c.bundles, id)
+					s.c.storeRevision = e.Kv.ModRevision
+				}
+			} else if e.Type == mvccpb.PUT {
+				bundle := &common.Bundle{}
+				err := proto.Unmarshal(e.Kv.Value, bundle)
+				if err != nil {
+					s.Log.Error(fmt.Sprintf("%v on %v", err, e.Kv.Value))
+				}
 
-			bundle := &common.Bundle{}
-			err := proto.Unmarshal(e.Kv.Value, bundle)
-			if err != nil {
-				s.Log.Error(fmt.Sprintf("%v on %v", err, e.Kv.Value))
-			}
-
-			if e.Type == watchDelete {
-				s.c.bundleMu.Lock()
-				delete(s.c.bundles, bundle.TrustDomainId)
-				s.c.bundleStoreRevision = e.Kv.ModRevision
-				s.c.bundleMu.Unlock()
-			} else if e.Type == watchUpdate {
-				s.c.bundleMu.Lock()
 				s.c.bundles[bundle.TrustDomainId] = bundle
-				s.c.bundleStoreRevision = e.Kv.ModRevision
-				s.c.bundleMu.Unlock()
+				s.c.storeRevision = e.Kv.ModRevision
 			} else {
 				s.Log.Error(fmt.Sprintf("Unknown watch event %v", e))
 			}
+
 		}
+
+		s.c.mu.Unlock()
 	}
 
 	// TODO restart at last successfully updated store revision
@@ -498,30 +498,33 @@ func (s *Shim) watchEntries(rev int64) error {
 			continue
 		}
 
+		// Hold the lock for all updates to give other routines the most recent data.
+		s.c.mu.Lock()
+
 		for _, e := range w.Events {
-			s.Log.Debug(fmt.Sprintf("%s %s at version %d at revision %d",
-				e.Type, e.Kv.Key, e.Kv.Version, e.Kv.ModRevision))
+			if e.Type == mvccpb.DELETE {
+				id, err := entryIDFromKey(string(e.Kv.Key))
+				if err != nil {
+					s.Log.Error(fmt.Sprintf("%s", err))
+				} else {
+					delete(s.c.entries, id)
+					s.c.storeRevision = e.Kv.ModRevision
+				}
+			} else if e.Type == mvccpb.PUT {
+				entry := &common.RegistrationEntry{}
+				err := proto.Unmarshal(e.Kv.Value, entry)
+				if err != nil {
+					s.Log.Error(fmt.Sprintf("%v on %v", err, e.Kv.Value))
+				}
 
-			entry := &common.RegistrationEntry{}
-			err := proto.Unmarshal(e.Kv.Value, entry)
-			if err != nil {
-				s.Log.Error(fmt.Sprintf("%v on %v", err, e.Kv.Value))
-			}
-
-			if e.Type == watchDelete {
-				s.c.entryMu.Lock()
-				delete(s.c.entries, entry.EntryId)
-				s.c.entryStoreRevision = e.Kv.ModRevision
-				s.c.entryMu.Unlock()
-			} else if e.Type == watchUpdate {
-				s.c.entryMu.Lock()
 				s.c.entries[entry.EntryId] = entry
-				s.c.entryStoreRevision = e.Kv.ModRevision
-				s.c.entryMu.Unlock()
+				s.c.storeRevision = e.Kv.ModRevision
 			} else {
 				s.Log.Error(fmt.Sprintf("Unknown watch event %v", e))
 			}
 		}
+
+		s.c.mu.Unlock()
 	}
 
 	// TODO restart at last successfully updated store revision
@@ -553,30 +556,33 @@ func (s *Shim) watchNodes(rev int64) error {
 			continue
 		}
 
+		// Hold the lock for all updates to give other routines the most recent data.
+		s.c.mu.Lock()
+
 		for _, e := range w.Events {
-			s.Log.Debug(fmt.Sprintf("%s %s at version %d at revision %d",
-				e.Type, e.Kv.Key, e.Kv.Version, e.Kv.ModRevision))
+			if e.Type == mvccpb.DELETE {
+				id, err := nodeIDFromKey(string(e.Kv.Key))
+				if err != nil {
+					s.Log.Error(fmt.Sprintf("%s", err))
+				} else {
+					delete(s.c.nodes, id)
+					s.c.storeRevision = e.Kv.ModRevision
+				}
+			} else if e.Type == mvccpb.PUT {
+				node := &common.AttestedNode{}
+				err := proto.Unmarshal(e.Kv.Value, node)
+				if err != nil {
+					s.Log.Error(fmt.Sprintf("%v on %v", err, e.Kv.Value))
+				}
 
-			node := &common.AttestedNode{}
-			err := proto.Unmarshal(e.Kv.Value, node)
-			if err != nil {
-				s.Log.Error(fmt.Sprintf("%v on %v", err, e.Kv.Value))
-			}
-
-			if e.Type == watchDelete {
-				s.c.nodeMu.Lock()
-				delete(s.c.nodes, node.SpiffeId)
-				s.c.nodeStoreRevision = e.Kv.ModRevision
-				s.c.nodeMu.Unlock()
-			} else if e.Type == watchUpdate {
-				s.c.nodeMu.Lock()
 				s.c.nodes[node.SpiffeId] = node
-				s.c.nodeStoreRevision = e.Kv.ModRevision
-				s.c.nodeMu.Unlock()
+				s.c.storeRevision = e.Kv.ModRevision
 			} else {
 				s.Log.Error(fmt.Sprintf("Unknown watch event %v", e))
 			}
 		}
+
+		s.c.mu.Unlock()
 	}
 
 	// TODO restart at last successfully updated store revision
@@ -608,30 +614,33 @@ func (s *Shim) watchTokens(rev int64) error {
 			continue
 		}
 
+		// Hold the lock for all updates to give other routines the most recent data.
+		s.c.mu.Lock()
+
 		for _, e := range w.Events {
-			s.Log.Debug(fmt.Sprintf("%s %s at version %d at revision %d",
-				e.Type, e.Kv.Key, e.Kv.Version, e.Kv.ModRevision))
+			if e.Type == mvccpb.DELETE {
+				id, err := tokenIDFromKey(string(e.Kv.Key))
+				if err != nil {
+					s.Log.Error(fmt.Sprintf("%s", err))
+				} else {
+					delete(s.c.tokens, id)
+					s.c.storeRevision = e.Kv.ModRevision
+				}
+			} else if e.Type == mvccpb.PUT {
+				token := &datastore.JoinToken{}
+				err := proto.Unmarshal(e.Kv.Value, token)
+				if err != nil {
+					s.Log.Error(fmt.Sprintf("%v on %v", err, e.Kv.Value))
+				}
 
-			token := &datastore.JoinToken{}
-			err := proto.Unmarshal(e.Kv.Value, token)
-			if err != nil {
-				s.Log.Error(fmt.Sprintf("%v on %v", err, e.Kv.Value))
-			}
-
-			if e.Type == watchDelete {
-				s.c.tokenMu.Lock()
-				delete(s.c.tokens, token.Token)
-				s.c.tokenStoreRevision = e.Kv.ModRevision
-				s.c.tokenMu.Unlock()
-			} else if e.Type == watchUpdate {
-				s.c.tokenMu.Lock()
 				s.c.tokens[token.Token] = token
-				s.c.tokenStoreRevision = e.Kv.ModRevision
-				s.c.tokenMu.Unlock()
+				s.c.storeRevision = e.Kv.ModRevision
 			} else {
 				s.Log.Error(fmt.Sprintf("Unknown watch event %v", e))
 			}
 		}
+
+		s.c.mu.Unlock()
 	}
 
 	// TODO restart at last successfully updated store revision
@@ -656,7 +665,7 @@ func (s *Shim) startHeartbeatService() {
 		return
 	}
 
-	if s.c.hbInterval == 0 {
+	if s.c.heartbeatInterval == 0 {
 		// s.Log.Warn("Heartbeat disabled")
 		return
 	}
@@ -670,7 +679,7 @@ func (s *Shim) startHeartbeatService() {
 func (s *Shim) hbSend(rev int64) {
 	id := fmt.Sprintf("%d", rev)
 	// Loop every interval forever
-	ticker := s.clock.Ticker(s.c.hbInterval)
+	ticker := s.clock.Ticker(s.c.heartbeatInterval)
 	for t := range ticker.C {
 		s.Log.Debug(fmt.Sprintf("Sending heartbeat %q at %d", id, t.UnixNano()))
 		s.sendHB(context.TODO(), id, "", t.UnixNano())

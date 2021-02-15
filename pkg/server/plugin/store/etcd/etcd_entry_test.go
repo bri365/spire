@@ -198,6 +198,7 @@ func (s *PluginSuite) TestListRegistrationEntries() {
 	expectedResponse := &datastore.ListRegistrationEntriesResponse{
 		Entries: []*common.RegistrationEntry{entry2, entry1},
 	}
+	s.T().Logf("%v", resp.Entries)
 	util.SortRegistrationEntries(expectedResponse.Entries)
 	util.SortRegistrationEntries(resp.Entries)
 	s.RequireProtoEqual(expectedResponse, resp)
