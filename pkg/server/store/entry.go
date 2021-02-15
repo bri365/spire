@@ -383,35 +383,44 @@ func (s *Shim) listRegistrationEntries(ctx context.Context, revision int64,
 		// Batches would be PageSize if paginated or a few hundred to a thousand at a time
 		var i int64 = 1
 		for _, id := range ids {
+			// Ignore entries from previous pages
 			if p != nil && len(p.Token) > 0 && entryKey(id) < key {
 				continue
 			}
 
-			// TODO fetch these from cache
-			// NOTE: this will involve either adding store version to cache entries or caching
-			// the protobuf response rather than the unmarshalled node
+			// TODO Fetch these from cache iof enabled and revision matches.
 			res, err := s.Store.Get(ctx, &store.GetRequest{Key: entryKey(id), Revision: rev})
 			if err != nil {
 				return nil, 0, err
 			}
 
-			if len(res.Kvs) == 1 {
-				e := &common.RegistrationEntry{}
-				if err = proto.Unmarshal(res.Kvs[0].Value, e); err != nil {
-					return nil, 0, err
+			if len(res.Kvs) != 1 {
+				if len(res.Kvs) > 1 {
+					s.Log.Error(fmt.Sprintf("Too many entries %v", res.Kvs))
 				}
-				if req.BySelectors != nil {
-					if !s.entrySelectorMatch(e, req.BySelectors) {
-						continue
-					}
-				}
-				resp.Entries = append(resp.Entries, e)
-				lastKey = entryKey(e.EntryId)
+				continue
+			}
 
-				if limit > 0 && i == limit {
-					break
+			e := &common.RegistrationEntry{}
+			if err = proto.Unmarshal(res.Kvs[0].Value, e); err != nil {
+				return nil, 0, err
+			}
+
+			if req.BySelectors != nil {
+				// Remove the overly optimistic results from above
+				if !s.entrySelectorMatch(e, req.BySelectors) {
+					continue
 				}
 			}
+
+			resp.Entries = append(resp.Entries, e)
+			lastKey = entryKey(e.EntryId)
+
+			// If paginated, have we reached the page limit?
+			if limit > 0 && i == limit {
+				break
+			}
+
 			i++
 		}
 	} else {
