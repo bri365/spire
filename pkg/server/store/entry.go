@@ -266,34 +266,34 @@ func (s *Shim) listRegistrationEntries(ctx context.Context, revision int64,
 
 	// A collection of IDs for the filtered results - maps make intersection easier
 	// NOTE: for performance reasons, organize the following filters with smallest expected results first
-	idMaps := []map[string]bool{}
+	idSets := []map[string]bool{}
 
 	if req.BySpiffeId != nil && req.BySpiffeId.Value != "" {
-		ids, err := s.entrySidMap(ctx, rev, req.BySpiffeId.Value)
+		ids, err := s.entrySidSet(ctx, rev, req.BySpiffeId.Value)
 		if err != nil {
 			return nil, 0, err
 		}
-		idMaps = append(idMaps, ids)
+		idSets = append(idSets, ids)
 	}
 
 	if req.ByParentId != nil && req.ByParentId.Value != "" {
-		ids, err := s.entryPidMap(ctx, rev, req.ByParentId.Value)
+		ids, err := s.entryPidSet(ctx, rev, req.ByParentId.Value)
 		if err != nil {
 			return nil, 0, err
 		}
-		idMaps = append(idMaps, ids)
+		idSets = append(idSets, ids)
 	}
 
 	if req.ByFederatesWith != nil {
 		subset := map[string]bool{}
 		for _, domain := range req.ByFederatesWith.TrustDomains {
-			ids, err := s.entryFedByDomainMap(ctx, rev, domain)
+			ids, err := s.entryFedByDomainSet(ctx, rev, domain)
 			if err != nil {
 				return nil, 0, err
 			}
 			if req.ByFederatesWith.Match == datastore.ByFederatesWith_MATCH_EXACT {
 				// The given selectors are the complete set for an entry to match
-				idMaps = append(idMaps, ids)
+				idSets = append(idSets, ids)
 			} else if req.ByFederatesWith.Match == datastore.ByFederatesWith_MATCH_SUBSET {
 				// The given selectors are a subset (up to all) of an entry
 				// or a subset of the given selectors match the total selectors of an entry.
@@ -306,20 +306,20 @@ func (s *Shim) listRegistrationEntries(ctx context.Context, revision int64,
 			}
 		}
 		if len(subset) > 0 {
-			idMaps = append(idMaps, subset)
+			idSets = append(idSets, subset)
 		}
 	}
 
 	if req.BySelectors != nil {
 		subset := map[string]bool{}
 		for _, sel := range req.BySelectors.Selectors {
-			ids, err := s.entrySelMap(ctx, rev, sel)
+			ids, err := s.entrySelSet(ctx, rev, sel)
 			if err != nil {
 				return nil, 0, err
 			}
 			if req.BySelectors.Match == datastore.BySelectors_MATCH_EXACT {
 				// The given selectors are the complete set for an entry to match
-				idMaps = append(idMaps, ids)
+				idSets = append(idSets, ids)
 			} else if req.BySelectors.Match == datastore.BySelectors_MATCH_SUBSET {
 				// The given selectors are a subset (up to all) of an entry
 				// or a subset of the given selectors match the total selectors of an entry.
@@ -332,23 +332,23 @@ func (s *Shim) listRegistrationEntries(ctx context.Context, revision int64,
 			}
 		}
 		if len(subset) > 0 {
-			idMaps = append(idMaps, subset)
+			idSets = append(idSets, subset)
 		}
 	}
 
-	count := len(idMaps)
+	count := len(idSets)
 	if count > 1 {
-		// intersect each additional query map into the first map
+		// intersect each additional query set into the first set
 		// resulting in a single list of IDs meeting all filter criteria
 		for i := 1; i < count; i++ {
 			tmp := map[string]bool{}
-			for id := range idMaps[0] {
+			for id := range idSets[0] {
 				// Add item if it appears in both maps
-				if _, ok := idMaps[i][id]; ok {
+				if _, ok := idSets[i][id]; ok {
 					tmp[id] = true
 				}
 			}
-			idMaps[0] = tmp
+			idSets[0] = tmp
 		}
 	}
 
@@ -370,9 +370,9 @@ func (s *Shim) listRegistrationEntries(ctx context.Context, revision int64,
 	lastKey := ""
 	resp := &datastore.ListRegistrationEntriesResponse{}
 	if count > 0 {
-		// Create a sorted list of node IDs from resulting filter map
+		// Create a sorted list of node IDs from resulting filter set
 		ids := []string{}
-		for id := range idMaps[0] {
+		for id := range idSets[0] {
 			ids = append(ids, id)
 		}
 		sort.Strings(ids)
@@ -586,7 +586,7 @@ func (s *Shim) UpdateRegistrationEntry(ctx context.Context,
 	}
 
 	if req.Mask == nil || req.Mask.FederatesWith {
-		// Build a map of previous domains to check for changes
+		// Build a set of previous domains to check for changes
 		previous := map[string]bool{}
 		if e.FederatesWith != nil {
 			for _, domain := range e.FederatesWith {
@@ -755,10 +755,9 @@ func entryExpID(key string) (string, error) {
 	return items[3], nil
 }
 
-// entryExpMap returns a map of registered entry ids expiring before or after the given expiry.
+// entryExpSet returns a set of registered entry ids expiring before or after the given expiry.
 // A specific store revision may be supplied for transactional consistency; 0 = current revision
-// Use of a map facilitates easier intersection with other filters
-func (s *Shim) entryExpMap(ctx context.Context, rev, exp int64, after bool) (map[string]bool, error) {
+func (s *Shim) entryExpSet(ctx context.Context, rev, exp int64, after bool) (map[string]bool, error) {
 	// Set range to all index keys after or before the given time
 	key, end := "", ""
 	if after {
@@ -807,10 +806,9 @@ func entryFedByDomainID(key string) (string, error) {
 	return items[3], nil
 }
 
-// entryFedByDomainMap returns a map of registered entry ids with the given federated domain.
+// entryFedByDomainSet returns a set of registered entry ids with the given federated domain.
 // A specific store revision may be supplied for transactional consistency; 0 = current revision
-// Use of a map facilitates easier intersection with other filters
-func (s *Shim) entryFedByDomainMap(ctx context.Context, rev int64, domain string) (map[string]bool, error) {
+func (s *Shim) entryFedByDomainSet(ctx context.Context, rev int64, domain string) (map[string]bool, error) {
 	// Set range to all index keys with the given parent ID
 	key := fmt.Sprintf("%s%s%s%s%s", entryIndex, FED, delim, domain, delim)
 	end := fmt.Sprintf("%s%s%s%s%s", entryIndex, FED, delim, domain, delend)
@@ -847,10 +845,9 @@ func entryPidID(key string) (string, error) {
 	return items[3], nil
 }
 
-// entryPidMap returns a map of registered entry ids with the given parent ID.
+// entryPidSet returns a set of registered entry ids with the given parent ID.
 // A specific store revision may be supplied for transactional consistency; 0 = current revision
-// Use of a map facilitates easier intersection with other filters
-func (s *Shim) entryPidMap(ctx context.Context, rev int64, pid string) (map[string]bool, error) {
+func (s *Shim) entryPidSet(ctx context.Context, rev int64, pid string) (map[string]bool, error) {
 	// Set range to all index keys with the given parent ID
 	key := fmt.Sprintf("%s%s%s%s%s", entryIndex, PID, delim, pid, delim)
 	end := fmt.Sprintf("%s%s%s%s%s", entryIndex, PID, delim, pid, delend)
@@ -887,10 +884,9 @@ func entrySidID(key string) (string, error) {
 	return items[3], nil
 }
 
-// entrySidMap returns a map of registered entry ids with the given parent ID.
+// entrySidSet returns a set of registered entry ids with the given parent ID.
 // A specific store revision may be supplied for transactional consistency; 0 = current revision
-// Use of a map facilitates easier intersection with other filters
-func (s *Shim) entrySidMap(ctx context.Context, rev int64, sid string) (map[string]bool, error) {
+func (s *Shim) entrySidSet(ctx context.Context, rev int64, sid string) (map[string]bool, error) {
 	// Set range to all index keys with the given parent ID
 	key := fmt.Sprintf("%s%s%s%s%s", entryIndex, SID, delim, sid, delim)
 	end := fmt.Sprintf("%s%s%s%s%s", entryIndex, SID, delim, sid, delend)
@@ -927,10 +923,9 @@ func entrySelID(key string) (string, error) {
 	return items[4], nil
 }
 
-// entrySelMap returns a map of registered entry ids by selector match.
+// entrySelSet returns a set of registered entry ids by selector match.
 // A specific store revision may be supplied for transactional consistency; 0 = current revision
-// Use of a map facilitates easier intersection with other filters
-func (s *Shim) entrySelMap(ctx context.Context, rev int64, sel *common.Selector) (map[string]bool, error) {
+func (s *Shim) entrySelSet(ctx context.Context, rev int64, sel *common.Selector) (map[string]bool, error) {
 	// Set range to all index keys for this type and value
 	key := fmt.Sprintf("%s%s%s%s%s%s%s", entryIndex, TVI, delim, sel.Type, delim, sel.Value, delim)
 	end := fmt.Sprintf("%s%s%s%s%s%s%s", entryIndex, TVI, delim, sel.Type, delim, sel.Value, delend)

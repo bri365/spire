@@ -211,8 +211,8 @@ func (s *Shim) listAttestedNodes(ctx context.Context, revision int64,
 		return nil, 0, status.Error(codes.InvalidArgument, "cannot list by empty selectors set")
 	}
 
-	// If specific rev not requested, get the current store revision for use in subsequent calls
-	// to ensure transactional consistency of index read operations.
+	// If a specific store revision was not requested, get the current store revision for use in
+	// subsequent calls to ensure transactional consistency of index read operations.
 	var rev int64
 	if revision == 0 {
 		res, err := s.Store.Get(ctx, &store.GetRequest{Key: nodePrefix, End: allNodes, Limit: 1})
@@ -222,16 +222,16 @@ func (s *Shim) listAttestedNodes(ctx context.Context, revision int64,
 		rev = res.Revision
 	}
 
-	// A collection of IDs for the filtered results - maps make intersection easier
+	// A set of node IDs for the filtered results - boolean maps make set intersection easier to read
 	// NOTE: for performance reasons, organize the following filters with smallest expected results first
-	idMaps := []map[string]bool{}
+	idSets := []map[string]bool{}
 
 	if req.ByAttestationType != "" {
 		ids, err := s.nodeAdtMap(ctx, rev, req.ByAttestationType)
 		if err != nil {
 			return nil, 0, err
 		}
-		idMaps = append(idMaps, ids)
+		idSets = append(idSets, ids)
 	}
 
 	if req.ByBanned != nil {
@@ -239,7 +239,7 @@ func (s *Shim) listAttestedNodes(ctx context.Context, revision int64,
 		if err != nil {
 			return nil, 0, err
 		}
-		idMaps = append(idMaps, ids)
+		idSets = append(idSets, ids)
 	}
 
 	if req.ByExpiresBefore != nil {
@@ -247,7 +247,7 @@ func (s *Shim) listAttestedNodes(ctx context.Context, revision int64,
 		if err != nil {
 			return nil, 0, err
 		}
-		idMaps = append(idMaps, ids)
+		idSets = append(idSets, ids)
 	}
 
 	if req.BySelectorMatch != nil {
@@ -259,7 +259,7 @@ func (s *Shim) listAttestedNodes(ctx context.Context, revision int64,
 			}
 			if req.BySelectorMatch.Match == datastore.BySelectors_MATCH_EXACT {
 				// The given selectors are the complete set for a node to match
-				idMaps = append(idMaps, ids)
+				idSets = append(idSets, ids)
 			} else if req.BySelectorMatch.Match == datastore.BySelectors_MATCH_SUBSET {
 				// The given selectors are a subset (up to all) of a node
 				// or a subset of the given selectors match the total selectors of a node.
@@ -272,22 +272,23 @@ func (s *Shim) listAttestedNodes(ctx context.Context, revision int64,
 			}
 		}
 		if len(subset) > 0 {
-			idMaps = append(idMaps, subset)
+			idSets = append(idSets, subset)
 		}
 	}
 
-	count := len(idMaps)
+	count := len(idSets)
 	if count > 1 {
-		// intersect query maps into the first one
+		// intersect additional query sets into the first one
+		// TODO extract this into a shared utility library
 		for i := 1; i < count; i++ {
 			tmp := map[string]bool{}
-			for id := range idMaps[0] {
-				// Add item if it appears in both maps
-				if _, ok := idMaps[i][id]; ok {
+			for id := range idSets[0] {
+				// Add item if it appears in both sets
+				if idSets[i][id] {
 					tmp[id] = true
 				}
 			}
-			idMaps[0] = tmp
+			idSets[0] = tmp
 		}
 	}
 
@@ -311,7 +312,7 @@ func (s *Shim) listAttestedNodes(ctx context.Context, revision int64,
 	if count > 0 {
 		// Create a sorted list of node IDs from resulting filter map
 		ids := []string{}
-		for id := range idMaps[0] {
+		for id := range idSets[0] {
 			ids = append(ids, id)
 		}
 		sort.Strings(ids)
@@ -327,8 +328,17 @@ func (s *Shim) listAttestedNodes(ctx context.Context, revision int64,
 			}
 
 			// TODO fetch these from cache
-			// NOTE: this will involve either adding store version to cache entries or caching
-			// the protobuf response rather than the unmarshalled node
+			// If cache store revision is <= saved/requested revision above then it should be safe
+			// to fetch the items from cache. If an item has not yet been updated in the cache
+			// and is older than the stored index(es) the ID list was built from then:
+			// 1) the item was deleted; it will not be requested from the cache
+			// 2) the item was created; it is not present in cache and will be fetched from the store
+			// 3) the item was updated on a different server and the changes have not yet made it to
+			// this server. In this case, an older version of the item will be returned from cache.
+			// 3a) a non-filtered field of the item changed; the cached version returned
+			// 3b) a filtered field of the item changed;
+			// NOTE: if all cache updates share a single store revision number, then we could simply
+			// check that the store revision from the index fetches exactly matches the cache version.
 			res, err := s.Store.Get(ctx, &store.GetRequest{Key: nodeKey(id), Revision: rev})
 			if err != nil {
 				return nil, 0, err
