@@ -190,9 +190,6 @@ func (s *Shim) DeleteBundle(ctx context.Context,
 	// One delete operation for this transaction
 	tx := []*store.SetRequestElement{{Operation: store.Operation_DELETE, Kvs: del}}
 
-	// Invalidate cache entry here to prevent race condition with async watcher
-	s.removeBundleCacheEntry(id)
-
 	_, err = s.Store.Set(ctx, &store.SetRequest{Elements: tx})
 	if err != nil {
 		st := status.Convert(err)
@@ -218,18 +215,10 @@ func (s *Shim) FetchBundle(ctx context.Context,
 		return
 	}
 
-	bundle := s.fetchBundleCacheEntry(req.TrustDomainId)
-	if bundle != nil {
-		resp = &datastore.FetchBundleResponse{Bundle: bundle}
-		return
-	}
-
 	resp, _, err = s.fetchBundle(ctx, req)
 	if resp.Bundle == nil {
 		return
 	}
-
-	s.setBundleCacheEntry(req.TrustDomainId, resp.Bundle)
 
 	return
 }
@@ -300,23 +289,6 @@ func (s *Shim) listBundles(ctx context.Context, rev int64,
 	}
 
 	resp := &datastore.ListBundlesResponse{}
-
-	// Serve from cache if available, not paginated, and rev matches or was not specified
-	if s.c.initialized && s.c.bundleCacheEnabled {
-		s.c.mu.RLock()
-		r := s.c.storeRevision
-		if p == nil && (rev == 0 || rev == r) {
-			resp.Bundles = make([]*common.Bundle, len(s.c.bundles))
-			i := 0
-			for _, bundle := range s.c.bundles {
-				resp.Bundles[i] = bundle
-				i++
-			}
-			s.c.mu.RUnlock()
-			return resp, r, nil
-		}
-		s.c.mu.RUnlock()
-	}
 
 	// Pagination requested or cache does not support the requested rev
 	// TODO pagination support requires a sorted array of IDs be maintained with the cache entries.
@@ -477,9 +449,6 @@ func (s *Shim) updateBundle(ctx context.Context,
 	// One put operation for this transaction
 	tx := []*store.SetRequestElement{{Operation: store.Operation_PUT, Kvs: kvs}}
 
-	// Invalidate cache entry here to prevent race condition with async watcher
-	s.removeBundleCacheEntry(id)
-
 	_, err = s.Store.Set(ctx, &store.SetRequest{Elements: tx})
 	if err != nil {
 		return nil, err
@@ -491,13 +460,13 @@ func (s *Shim) updateBundle(ctx context.Context,
 // bundleKey returns a string formatted key for a bundle
 func bundleKey(id string) string {
 	// e.g. "B|spiffie://example.com"
-	return fmt.Sprintf("%s%s", bundlePrefix, id)
+	return fmt.Sprintf("%s%s", BundlePrefix, id)
 }
 
 // bundleIDFromKey returns the bundle id from the given bundle key.
 func bundleIDFromKey(key string) (string, error) {
-	items := strings.Split(key, delim)
-	if len(items) != 2 || items[0] != bundleKeyID {
+	items := strings.Split(key, Delim)
+	if len(items) != 2 || items[0] != BundleKeyID {
 		return "", fmt.Errorf("invalid bundle key: %s", key)
 	}
 	return items[1], nil

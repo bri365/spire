@@ -24,8 +24,6 @@ type StoreClient = store.StoreClient                           //nolint: golint
 type StoreServer = store.StoreServer                           //nolint: golint
 type UnimplementedStoreServer = store.UnimplementedStoreServer //nolint: golint
 type UnsafeStoreServer = store.UnsafeStoreServer               //nolint: golint
-type WatchRequest = store.WatchRequest                         //nolint: golint
-type WatchResponse = store.WatchResponse                       //nolint: golint
 
 const (
 	Type                = "Store"
@@ -43,7 +41,6 @@ const (
 type Store interface {
 	Get(context.Context, *GetRequest) (*GetResponse, error)
 	Set(context.Context, *SetRequest) (*SetResponse, error)
-	Watch(context.Context, *WatchRequest) (*WatchResponse, error)
 }
 
 // Plugin is the client interface for the service with the plugin related methods used by the catalog to initialize the plugin.
@@ -52,7 +49,6 @@ type Plugin interface {
 	Get(context.Context, *GetRequest) (*GetResponse, error)
 	GetPluginInfo(context.Context, *spi.GetPluginInfoRequest) (*spi.GetPluginInfoResponse, error)
 	Set(context.Context, *SetRequest) (*SetResponse, error)
-	Watch(context.Context, *WatchRequest) (*WatchResponse, error)
 }
 
 // PluginServer returns a catalog PluginServer implementation for the Store plugin.
@@ -114,8 +110,4 @@ func (a pluginClientAdapter) GetPluginInfo(ctx context.Context, in *spi.GetPlugi
 
 func (a pluginClientAdapter) Set(ctx context.Context, in *SetRequest) (*SetResponse, error) {
 	return a.client.Set(ctx, in)
-}
-
-func (a pluginClientAdapter) Watch(ctx context.Context, in *WatchRequest) (*WatchResponse, error) {
-	return a.client.Watch(ctx, in)
 }

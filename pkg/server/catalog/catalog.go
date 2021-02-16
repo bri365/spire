@@ -237,10 +237,7 @@ func Load(ctx context.Context, config Config) (*Repository, error) {
 	// Install the store shim as the datastore plugin, which will use
 	// etcd store if configured or SQL datastore otherwise.
 	ssLogger := common_log.NewHCLogAdapter(config.Log, telemetry.PluginBuiltIn).Named("ss")
-	p.DataStore.DataStore, err = ss.New(ds, st, ssLogger, st.Cfg, st.Etcd)
-	if err != nil {
-		return nil, err
-	}
+	p.DataStore.DataStore = ss.New(ds, st, ssLogger)
 
 	// Add telemetry to datastore
 	p.DataStore.DataStore = datastore_telemetry.WithMetrics(p.DataStore.DataStore, config.Metrics)

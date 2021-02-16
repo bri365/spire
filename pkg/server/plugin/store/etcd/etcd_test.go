@@ -104,12 +104,20 @@ func (s *PluginSuite) SetupTest() {
 	s.T().Log("SetupTest")
 	log, _ := common_log.NewLogger()
 	ssLogger := common_log.NewHCLogAdapter(log, telemetry.PluginBuiltIn).Named("shim")
-	s.st = s.newPlugin()
-	cfg := &ss.Configuration{}
-	s.shim, err = ss.New(nil, s.st, ssLogger, cfg, s.etcdPlugin.Etcd)
-	if err != nil {
-		s.T().Fatal(err)
+
+	cfg := &spi.ConfigureRequest{
+		Configuration: `
+		endpoints = ["192.168.50.181:2379","192.168.50.182:2379","192.168.50.183:2379"]
+		root_ca_path = "/Users/brian/Dev/scytale/performance-tests/etcd/tf-etcd-vsphere/certs/ca.pem"
+		client_cert_path = "/Users/brian/Dev/scytale/performance-tests/etcd/tf-etcd-vsphere/certs/client.pem"
+		client_key_path = "/Users/brian/Dev/scytale/performance-tests/etcd/tf-etcd-vsphere/certs/client-key.pem"
+		heartbeat_interval = 0
+		write_response_delay = 20
+		`,
 	}
+
+	s.st = s.newPlugin(cfg)
+	s.shim = ss.New(nil, s.st, ssLogger)
 
 	// delete all keys from the store
 	res, err := s.st.Get(context.Background(), &store.GetRequest{
@@ -139,14 +147,12 @@ func (s *PluginSuite) TearDownTest() {
 	s.etcdPlugin.close()
 }
 
-func (s *PluginSuite) newPlugin() store.Plugin {
+func (s *PluginSuite) newPlugin(cfg *spi.ConfigureRequest) store.Plugin {
 	var st store.Plugin
 
 	p := New()
 	s.etcdPlugin = p
 	s.LoadPlugin(builtin(p), &st)
-
-	// s.T().Logf("Endpoints: %v", TestEndpoints)
 
 	_, err := st.Configure(context.Background(), &spi.ConfigureRequest{
 		Configuration: `
