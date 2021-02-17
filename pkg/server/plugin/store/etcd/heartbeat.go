@@ -9,6 +9,7 @@ import (
 	ss "github.com/spiffe/spire/pkg/server/store"
 
 	"github.com/roguesoftware/etcd/clientv3"
+	"github.com/roguesoftware/etcd/mvcc/mvccpb"
 )
 
 const (
@@ -39,12 +40,10 @@ func (st *Plugin) StartHeartbeatService() (int64, error) {
 		return rev, nil
 	}
 
-	st.log.Info(fmt.Sprintf("Starting heartbeat with id %d", rev))
-	// fmt.Printf("Starting heartbeat with id %d\n", rev)
+	st.log.Info("Starting heartbeat service", "ID", rev)
+	// TODO handle returns from below
 	go st.heartbeatReply(context.TODO(), rev+1)
 	go st.heartbeatSend(rev + 1)
-
-	// Handle returns from above
 
 	return rev, nil
 }
@@ -52,55 +51,51 @@ func (st *Plugin) StartHeartbeatService() (int64, error) {
 // Send periodic heartbeat messages
 func (st *Plugin) heartbeatSend(rev int64) {
 	id := fmt.Sprintf("%d", rev)
-	// Loop every interval forever
+	// Loop forever, sending heartbeats at configured interval
 	ticker := st.clock.Ticker(st.heartbeatInterval)
 	for t := range ticker.C {
-		st.log.Info(fmt.Sprintf("Sending heartbeat %q at %d", id, t.UnixNano()))
 		st.sendHB(context.TODO(), id, "", t.UnixNano())
 	}
 }
 
-// Reply to heartbeat messages from other servers.
+// Watch heartbeat records created after we initialized and reply to messages from other servers
 func (st *Plugin) heartbeatReply(ctx context.Context, rev int64) {
-	// Watch heartbeat records created after we initialized
 	opts := []clientv3.OpOption{
 		clientv3.WithPrefix(),
 		clientv3.WithProgressNotify(),
 		clientv3.WithRev(rev),
 	}
+
 	hc := st.etcd.Watch(context.Background(), ss.HeartbeatPrefix, opts...)
 
 	id := fmt.Sprintf("%d", rev)
 	for w := range hc {
 		if w.Err() != nil {
-			st.log.Error(fmt.Sprintf("Heartbeat channel error %v", w.Err()))
+			st.log.Error("Heartbeat channel error", "error", w.Err())
 			return
 		}
 
 		if w.IsProgressNotify() {
-			st.log.Error("No heartbeats for 10 minutes")
+			st.log.Error("No heartbeats received for 10 minutes")
 		}
 
 		for _, e := range w.Events {
-			if e.Type == 1 {
-				// Ignore delete operations
+			if e.Type == mvccpb.DELETE {
 				continue
 			}
 			originator, responder, ts := st.parseHB(e)
 			delta := float64(st.clock.Now().UnixNano()-ts) / 1000000.0
 			if originator == id {
 				if responder == "" {
-					st.log.Info(fmt.Sprintf("self heartbeat in %.2fms", delta))
-					// fmt.Printf("self heartbeat in %.2fms\n", delta)
+					st.log.Info("Heartbeat from this server", "delta", delta)
 				} else {
-					st.log.Info(fmt.Sprintf("reply heartbeat from %s in %.2fms", responder, delta))
+					st.log.Info("Heartbeat received", "responder", responder, "delta", delta)
 				}
 			} else if originator != "" && responder == "" {
 				// reply to foreign heartbeat
-				st.log.Debug(fmt.Sprintf("reply to %s", originator))
 				_, err := st.sendHB(ctx, originator, id, ts)
 				if err != nil {
-					st.log.Error(fmt.Sprintf("Error sending heartbeat reply to %s %v", originator, err))
+					st.log.Error("Heartbeat: error sending reply", "originator", originator, "error", err)
 				}
 			}
 		}
@@ -112,7 +107,7 @@ func (st *Plugin) heartbeatReply(ctx context.Context, rev int64) {
 func (st *Plugin) sendHB(ctx context.Context, orig, resp string, ts int64) (int64, error) {
 	lease, err := st.etcd.Grant(ctx, heartbeatTTL)
 	if err != nil {
-		st.log.Error("Failed to acquire heartbeat lease")
+		st.log.Error("Heartbeat: failed to acquire lease", "error", err)
 		return 0, err
 	}
 
@@ -126,11 +121,11 @@ func (st *Plugin) sendHB(ctx context.Context, orig, resp string, ts int64) (int6
 	return res.Header.Revision, nil
 }
 
-// Parse a heartbeat and return the originator and responder ID strings and the timestamp
+// Parse a heartbeat and return the originator and responder ID strings and timestamp.
 func (st *Plugin) parseHB(hb *clientv3.Event) (string, string, int64) {
 	ts, err := strconv.ParseInt(string(hb.Kv.Value), 10, 64)
 	if err != nil {
-		st.log.Error(fmt.Sprintf("Invalid heartbeat payload %q %v", string(hb.Kv.Value), hb))
+		st.log.Error("Heartbeat: invalid payload", "value", string(hb.Kv.Value), "key", hb.Kv.Key)
 		return "", "", 0
 	}
 
@@ -143,7 +138,7 @@ func (st *Plugin) parseHB(hb *clientv3.Event) (string, string, int64) {
 		return items[1], items[2], ts
 	}
 
-	st.log.Error(fmt.Sprintf("Invalid heartbeat %q", string(hb.Kv.Key)))
+	st.log.Error("Heartbeat: invalid key", "key", string(hb.Kv.Key))
 
 	return "", "", 0
 }

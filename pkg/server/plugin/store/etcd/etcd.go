@@ -42,14 +42,13 @@ var (
 
 	etcdError = errs.Class("store-etcd")
 
-	// These default values may be overridden by configuration
-	dialTimeout = 5 * time.Second
-
+	// Default values may be overridden by configuration
+	dialTimeout        = 5 * time.Second
 	enableEotMarkers   = false
 	writeResponseDelay = 0
 )
 
-// Plugin is a store plugin implemented with etcd
+// Plugin is a store plugin implemented with etcd.
 type Plugin struct {
 	store.UnsafeStoreServer
 
@@ -70,7 +69,7 @@ type Plugin struct {
 	storeRevision     int64
 }
 
-// New creates a new etcd plugin struct
+// New creates a new etcd plugin.
 func New() *Plugin {
 	return &Plugin{
 		cache:             make(map[string]*store.KeyValue, initialCacheSize),
@@ -83,7 +82,7 @@ func New() *Plugin {
 	}
 }
 
-// BuiltIn designates this plugin as part of the standard product
+// BuiltIn designates this plugin as part of the core product.
 func BuiltIn() catalog.Plugin {
 	return builtin(New())
 }
@@ -92,7 +91,6 @@ func builtin(p *Plugin) catalog.Plugin {
 	return catalog.MakePlugin(PluginName, store.PluginServer(p))
 }
 
-// Configuration for the datastore
 // Pointers allow distinction between "unset" and "zero" values
 type configuration struct {
 	Endpoints          []string `hcl:"endpoints" json:"endpoints"`
@@ -106,16 +104,17 @@ type configuration struct {
 	ResetCache         *bool    `hcl:"reset_cache" json:"reset_cache"`
 }
 
-// GetPluginInfo returns etcd plugin information
+// GetPluginInfo returns etcd plugin information.
 func (*Plugin) GetPluginInfo(context.Context, *spi.GetPluginInfoRequest) (*spi.GetPluginInfoResponse, error) {
 	return &pluginInfo, nil
 }
 
-// SetLogger sets the plugin logger
+// SetLogger sets the plugin logger.
 func (st *Plugin) SetLogger(logger hclog.Logger) {
 	st.log = logger
 }
 
+// Validate checks the given plugin configuration.
 func (cfg *configuration) Validate() error {
 	if len(cfg.Endpoints) == 0 {
 		return errors.New("At least one endpoint must be set")
@@ -128,7 +127,7 @@ func (cfg *configuration) Validate() error {
 	return nil
 }
 
-// Configure parses HCL config payload into config struct and opens etcd connection
+// Configure parses HCL config into config struct, opens etcd connection, and initializes the cache.
 func (st *Plugin) Configure(ctx context.Context, req *spi.ConfigureRequest) (*spi.ConfigureResponse, error) {
 	st.log.Info("Configuring etcd store")
 
@@ -213,15 +212,16 @@ func (st *Plugin) close() {
 	}
 }
 
-// Get retrieves one or more items by key range.
+// Get retrieves one or more items by key or range.
 func (st *Plugin) Get(ctx context.Context, req *store.GetRequest) (*store.GetResponse, error) {
 	if st.cacheInitialized {
-		// NOTE: watch updates create new objects and update the cache pointers
-		// to reflect the newly created objects; copying the pointers here is safe
-		// because the objects are either unchanged or no longer referenced in the
+		// NOTE: cache updates from watch routines create new objects and update cache
+		// pointers to reflect the newly created objects; copying the pointers here is
+		// safe because the objects are either unchanged or no longer referenced in the
 		// cache and will not be freed until we release them.
 		if req.End == "" {
 			// Single key (e.g. fetch operations)
+			// Misses currently fall through to backend - probably unnecessary
 			if _, ok := st.cache[req.Key]; ok {
 				st.mu.RLock()
 				resp := &store.GetResponse{
@@ -231,30 +231,30 @@ func (st *Plugin) Get(ctx context.Context, req *store.GetRequest) (*store.GetRes
 					Total:    1,
 				}
 				st.mu.RUnlock()
-				// fmt.Printf("Get (cached single): %s\n", req.Key)
 				return resp, nil
 			}
 		} else {
 			// Range of keys (e.g. list operations)
+			// Complete miss (nothing found) currently falls through to backend - probably unnecessary
 			st.mu.RLock()
 			keys := st.findIndexKeyEnd(req.Key, req.End)
+			count := int64(len(keys))
 			if len(keys) > 0 {
 				resp := &store.GetResponse{
 					Kvs:      []*store.KeyValue{},
 					Revision: st.storeRevision,
-					Total:    int64(len(keys)),
+					Total:    count,
+					More:     req.Limit > 0 && count > req.Limit,
 				}
-				if req.Limit > 0 && resp.Total > req.Limit {
-					resp.More = true
-				}
+
 				for i, k := range keys {
 					if req.Limit > 0 && int64(i) == req.Limit {
 						break
 					}
 					resp.Kvs = append(resp.Kvs, st.cache[k])
 				}
+
 				st.mu.RUnlock()
-				// fmt.Printf("Get (cached range): %s %s %d\n", req.Key, req.End, resp.Total)
 				return resp, nil
 			}
 			st.mu.RUnlock()
@@ -301,7 +301,7 @@ func (st *Plugin) Get(ctx context.Context, req *store.GetRequest) (*store.GetRes
 // If a single comparison is requested, it should be listed first for the most precise error code.
 func (st *Plugin) Set(ctx context.Context, req *store.SetRequest) (*store.SetResponse, error) {
 	if len(req.Elements) == 0 {
-		return nil, status.Error(codes.InvalidArgument, "store-etcd: one or more set elements required")
+		return nil, status.Error(codes.InvalidArgument, "store-etcd: one or more Set elements required")
 	}
 
 	// Comparisons to perform before committing kv writes
@@ -362,10 +362,10 @@ func (st *Plugin) Set(ctx context.Context, req *store.SetRequest) (*store.SetRes
 		// return nil, status.Error(codes.Aborted, fmt.Sprintf("%s %v", res, t.Responses))
 	}
 
-	// Write delay for cluster sync time
-	// Most, if not all, items should tolerate eventual consistency
-	// Watch update latency is monitored through periodic heartbeats
-	// and the delay value can be adjusted if stricter consistency is desired
+	// Configurable write response delay to allow cluster nodes to sync changes
+	// Most, if not all, items should tolerate eventual consistency (typically 10's of milliseconds)
+	// Update latency is monitored through periodic heartbeats and the delay
+	// value can be adjusted if stricter consistency is desired
 	if writeResponseDelay > 0 {
 		time.Sleep(time.Duration(writeResponseDelay) * time.Millisecond)
 	}

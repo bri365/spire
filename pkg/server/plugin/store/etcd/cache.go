@@ -1,18 +1,17 @@
 package etcd
 
-// Cache represents the in-memory cache for Store objects.
-// The cache is implemented as separate sections for each object type.
-// As reads are expected to significantly outweight writes, cache segments are
-// protected with a RWMutex - allowing multiple parallel read operations.
+// The cache is implemented as a single map of KeyValue objects organized by key (object ID).
+// Index arrays of sorted keys are maintained for each object type - bundles, entries, and nodes.
 //
-// The cache is loaded from the backing store at startup and maintained through
+// Reads are expected to meaningfully outweight writes, so cache segments are
+// protected with a RWMutex to allow parallel read operations.
+//
+// The cache is loaded from backing store at startup and maintained through asynchronous
 // watch functions that stream backend write events (create, delete, update).
+//
 // For etcd, the watch feature is builtin. For other KV stores and SQL databases,
 // the watch feature may be implemented in an event table, and polling the backend
 // store revision or another lightweight change indicator.
-//
-// The cached elements are stored in unordered maps by object ID.
-// Index arrays of ID strings are maintained for bundles, entries, and nodes
 
 import (
 	"context"
@@ -27,59 +26,59 @@ import (
 )
 
 const (
-	// The number of cache entries to allocate on creation
+	// Number of cache entries to allocate on creation
 	initialCacheSize = 1024
 
-	// The number of records to load at a time during cache initialization
+	// Number of records to load at a time during cache initialization
 	loadPageSize = 10000
 )
 
-// cacheIndex maintains an ordered list and count of specific cache items.
+// cacheIndex consists of an ordered list and count of cached keys (object IDs).
 type cacheIndex struct {
 	Count int
 	Keys  []string
 }
 
-// initialize loads cache data and starts the watcher tasks.
-// Bulk loading is performed on the same store revision for consistency.
+// initializeCache loads cache data, sorted key indexes, and starts the watcher tasks.
+// Bulk loading is performed at the same store revision for consistency.
 // After the initial bulk load, watcher routines are started to
 // continually update the cache as store updates are processed.
 func (st *Plugin) initializeCache() error {
-	// rev is both the heartbeat ID for this server as well as the initial cache store revision
+	// rev is a unique store revision and serves as both the heartbeat ID for this server
+	// as well as the initial cache revision
 	rev, err := st.StartHeartbeatService()
 	if err != nil {
 		return err
 	}
 
 	if st.cacheEnabled {
-		err = st.loadItems(ss.BundleKeyID, rev, st.bundleIndex)
+		err = st.loadItems(ss.BundleKeyID, st.bundleIndex, rev)
 		if err != nil {
 			return err
 		}
 
-		err = st.loadItems(ss.EntryKeyID, rev, st.entryIndex)
+		err = st.loadItems(ss.EntryKeyID, st.entryIndex, rev)
 		if err != nil {
 			return err
 		}
 
-		err = st.loadItems(ss.NodeKeyID, rev, st.nodeIndex)
+		err = st.loadItems(ss.NodeKeyID, st.nodeIndex, rev)
 		if err != nil {
 			return err
 		}
 
-		go st.watchChanges(ss.BundlePrefix, rev+1, st.bundleIndex)
+		// Start watchers at the store revision immediately following the bulk load
+		go st.watchChanges(ss.BundlePrefix, st.bundleIndex, rev+1)
 
-		go st.watchChanges(ss.EntryPrefix, rev+1, st.entryIndex)
+		go st.watchChanges(ss.EntryPrefix, st.entryIndex, rev+1)
 
-		go st.watchChanges(ss.NodePrefix, rev+1, st.nodeIndex)
+		go st.watchChanges(ss.NodePrefix, st.nodeIndex, rev+1)
 
-		st.mu.RLock()
+		st.mu.Lock()
 		st.storeRevision = rev
 		st.cacheInitialized = true
-		// st.printCache("init")
-		st.mu.RUnlock()
-
-		st.log.Info("cache initialized")
+		st.log.Info("cache initialized", "count", len(st.cache))
+		st.mu.Unlock()
 	}
 
 	// TODO handle exit conditions from the five previous routines
@@ -87,7 +86,8 @@ func (st *Plugin) initializeCache() error {
 	return nil
 }
 
-// ResetCache returns the cache to an uninitialized state.
+// ResetCache returns the cache to the uninitialized state.
+// Used by tests to employ different configurations
 func (st *Plugin) resetCache() {
 	st.etcd.Close()
 	st.mu.Lock()
@@ -99,20 +99,13 @@ func (st *Plugin) resetCache() {
 	st.mu.Unlock()
 }
 
-func (st *Plugin) printCache(s string) {
-	keys := ""
-	for k := range st.cache {
-		keys = fmt.Sprintf("%s  %s", keys, k)
-	}
-	fmt.Printf("%s cache: %s %v %v %v\n", s, keys, st.bundleIndex, st.entryIndex, st.nodeIndex)
-}
-
-// loadItems performs the initial cache load for the requested item type
-func (st *Plugin) loadItems(key string, rev int64, ci *cacheIndex) error {
-	// The cache is being initialized so it is safe to hold the lock for the whole time
+// loadItems performs the initial cache bulk load for the requested item type
+func (st *Plugin) loadItems(key string, ci *cacheIndex, rev int64) error {
+	// Cache is being initialized so it is safe to hold the lock the whole time
 	st.mu.Lock()
 	defer st.mu.Unlock()
 
+	// Define a range to include all primary objects of the requested type (no indexes)
 	start := fmt.Sprintf("%s%s", key, ss.Delim)
 	end := fmt.Sprintf("%s%s", key, ss.Delend)
 	for {
@@ -127,10 +120,6 @@ func (st *Plugin) loadItems(key string, rev int64, ci *cacheIndex) error {
 			return fmt.Errorf("Loaded revision (%d) does not match requested (%d)", res.Revision, rev)
 		}
 
-		if len(res.Kvs) == 0 {
-			break
-		}
-
 		lastKey := ""
 		for _, kv := range res.Kvs {
 			st.cache[kv.Key] = kv
@@ -138,11 +127,15 @@ func (st *Plugin) loadItems(key string, rev int64, ci *cacheIndex) error {
 			lastKey = kv.Key
 		}
 
-		// Get next batch starting one bit greater than the last returned key
+		st.log.Info("Cache load", "count", len(res.Kvs), "last", lastKey, "rev", rev)
+
+		if len(res.Kvs) < loadPageSize {
+			break
+		}
+
+		// Next batch starts one bit greater than the last returned key
 		lastChar := lastKey[len(lastKey)-1] + 1
 		start = fmt.Sprintf("%s%c", lastKey[:len(lastKey)-1], lastChar)
-
-		st.log.Info(fmt.Sprintf("Loaded %d items, last: %s, next: %s, rev: %d", len(res.Kvs), lastKey, start, rev))
 	}
 
 	// Ensure index is sorted for range lookups
@@ -152,10 +145,11 @@ func (st *Plugin) loadItems(key string, rev int64, ci *cacheIndex) error {
 	return nil
 }
 
-// watchChanges receives a stream of updates (deletes or puts)
-// for cached items, beginning with changes in the given store revision.
-// Note: this is called as a goroutine and only returns on an error
-func (st *Plugin) watchChanges(key string, rev int64, ci *cacheIndex) error {
+// watchChanges receives a stream of updates (deletes or puts) from etcd.
+// These changes are applied to cached items, keeping server caches consistent,
+// typically within 10's of milliseconds.
+// Note: this is called as a goroutine and only returns after an error
+func (st *Plugin) watchChanges(key string, ci *cacheIndex, rev int64) error {
 	opts := []clientv3.OpOption{
 		clientv3.WithPrefix(),
 		clientv3.WithProgressNotify(),
@@ -163,20 +157,20 @@ func (st *Plugin) watchChanges(key string, rev int64, ci *cacheIndex) error {
 	}
 
 	wc := st.etcd.Watch(context.TODO(), key, opts...)
-	st.log.Info(fmt.Sprintf("Watching store updates for %s from %d", key, rev))
+	st.log.Info("Watching store updates", "key", key, "rev", rev)
 
 	for w := range wc {
 		if w.Err() != nil {
-			st.log.Error(fmt.Sprintf("chan error %v", w.Err()))
+			st.log.Error("Watch: channel error", "err", w.Err())
 			break
 		}
 
 		if w.IsProgressNotify() {
-			st.log.Info(fmt.Sprintf("No store updates for %s in 10 minutes", key))
+			st.log.Info("Watch: no updates for 10 minutes", "key", key)
 			continue
 		}
 
-		// Hold the lock for all updates to give other routines the most recent data.
+		// Hold lock for all updates to give other routines the most recent data.
 		st.mu.Lock()
 
 		for _, e := range w.Events {
@@ -197,7 +191,7 @@ func (st *Plugin) watchChanges(key string, rev int64, ci *cacheIndex) error {
 				st.insertIndexKey(ci, k)
 				st.storeRevision = e.Kv.ModRevision
 			} else {
-				st.log.Error(fmt.Sprintf("Unknown watch event %v", e))
+				st.log.Error("Watch: unknown event", "type", e.Type, "kv", e.Kv)
 			}
 		}
 
@@ -221,7 +215,6 @@ func (st *Plugin) insertIndexKey(ci *cacheIndex, key string) {
 	copy(ci.Keys[i+1:], ci.Keys[i:])
 	ci.Keys[i] = key
 	ci.Count = len(ci.Keys)
-	// st.printCache("ik")
 	return
 }
 
@@ -232,7 +225,6 @@ func (st *Plugin) removeIndexKey(ci *cacheIndex, key string) {
 	if i < len(ci.Keys) && ci.Keys[i] == key {
 		ci.Keys = append(ci.Keys[:i], ci.Keys[i+1:]...)
 		ci.Count = len(ci.Keys)
-		// st.printCache("rk")
 		return
 	}
 	// Not found
@@ -269,4 +261,12 @@ func (st *Plugin) findIndexKeyEnd(key, end string) []string {
 	}
 
 	return ci.Keys[start:finish]
+}
+
+func (st *Plugin) printCache(s string) {
+	keys := ""
+	for k := range st.cache {
+		keys = fmt.Sprintf("%s  %s", keys, k)
+	}
+	fmt.Printf("%s cache: %s %v %v %v\n", s, keys, st.bundleIndex, st.entryIndex, st.nodeIndex)
 }

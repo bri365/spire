@@ -1,4 +1,3 @@
-// Package store implements a datastore shim with the proposed new store interface.
 package store
 
 import (
@@ -22,6 +21,7 @@ import (
 func (s *Shim) AppendBundle(ctx context.Context,
 	req *datastore.AppendBundleRequest) (*datastore.AppendBundleResponse, error) {
 
+	// Fall back to SQL if store is not configured
 	if s.Store == nil {
 		return s.DataStore.AppendBundle(ctx, req)
 	}
@@ -29,7 +29,6 @@ func (s *Shim) AppendBundle(ctx context.Context,
 	bundle := req.Bundle
 	id := bundle.TrustDomainId
 
-	// TODO consider getting the current bundle from cache
 	fr, ver, err := s.fetchBundle(ctx, &datastore.FetchBundleRequest{TrustDomainId: id})
 	if err != nil {
 		return nil, err
@@ -290,8 +289,6 @@ func (s *Shim) listBundles(ctx context.Context, rev int64,
 
 	resp := &datastore.ListBundlesResponse{}
 
-	// Pagination requested or cache does not support the requested rev
-	// TODO pagination support requires a sorted array of IDs be maintained with the cache entries.
 	res, err := s.Store.Get(ctx, &store.GetRequest{Key: key, End: end, Limit: limit, Revision: rev})
 	if err != nil {
 		return nil, 0, err
@@ -341,7 +338,7 @@ func (s *Shim) PruneBundle(ctx context.Context,
 	}
 
 	// Prune
-	newBundle, changed, err := bundleutil.PruneBundle(fr.Bundle, time.Unix(req.ExpiresBefore, 0), s.Log)
+	newBundle, changed, err := bundleutil.PruneBundle(fr.Bundle, time.Unix(req.ExpiresBefore, 0), s.log)
 	if err != nil {
 		return nil, fmt.Errorf("prune failed: %v", err)
 	}

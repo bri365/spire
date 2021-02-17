@@ -1,4 +1,3 @@
-// Package store implements a datastore shim with the proposed new store interface.
 package store
 
 import (
@@ -316,18 +315,6 @@ func (s *Shim) listAttestedNodes(ctx context.Context, revision int64,
 				continue
 			}
 
-			// TODO fetch these from cache
-			// If cache store revision is <= saved/requested revision above then it should be safe
-			// to fetch the items from cache. If an item has not yet been updated in the cache
-			// and is older than the stored index(es) the ID list was built from then:
-			// 1) the item was deleted; it will not be requested from the cache
-			// 2) the item was created; it is not present in cache and will be fetched from the store
-			// 3) the item was updated on a different server and the changes have not yet made it to
-			// this server. In this case, an older version of the item will be returned from cache.
-			// 3a) a non-filtered field of the item changed; the cached version returned
-			// 3b) a filtered field of the item changed;
-			// NOTE: if all cache updates share a single store revision number, then we could simply
-			// check that the store revision from the index fetches exactly matches the cache version.
 			res, err := s.Store.Get(ctx, &store.GetRequest{Key: nodeKey(id), Revision: rev})
 			if err != nil {
 				return nil, 0, err
@@ -359,9 +346,6 @@ func (s *Shim) listAttestedNodes(ctx context.Context, revision int64,
 		}
 	} else {
 		// No filters, get all nodes up to limit
-
-		// Pagination requested or cache does not support the requested rev
-		// TODO pagination support requires a sorted array of IDs be maintained with the cache entries.
 		res, err := s.Store.Get(ctx, &store.GetRequest{Key: key, End: AllNodes, Limit: limit, Revision: rev})
 		if err != nil {
 			return nil, 0, err
@@ -855,7 +839,7 @@ func (s *Shim) nodeSelectorMatch(node *common.AttestedNode, req *datastore.BySel
 		}
 		return true
 	} else {
-		s.Log.Warn(fmt.Sprintf("Unknown match %v", req.Match))
+		s.log.Warn(fmt.Sprintf("Unknown match %v", req.Match))
 	}
 	return false
 }

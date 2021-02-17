@@ -25,7 +25,7 @@ func (s *PluginSuite) TestZHeartbeat() {
 	s.st.Configure(context.TODO(), cfg)
 
 	// Let a few heartbeats happen
-	fmt.Printf("Sleeping for a few heartbeats")
+	fmt.Println("Sleeping for a few heartbeats")
 	time.Sleep(5 * time.Second)
 	s.Require().NoError(nil)
 }

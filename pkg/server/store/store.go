@@ -6,7 +6,7 @@
 // or "E|5fee2e4a-1fe3-4bf3-b4f0-55eaf268c12a" for a registration entry
 //
 // Indices are stored with a Key string and no Value. Index keys are formatted as
-// <I><item key><delim><index field identifier>[...<delim><field value>]<delim><unique item identifier>
+// <item key><I><delim><index field identifier>[...<delim><field value>]<delim><unique item identifier>
 // e.g. "NI|EXP|1611907252|spiffie://example.com/clusterA/nodeN" for an attested node expiry
 //
 package store
@@ -25,17 +25,16 @@ type Shim struct {
 	datastore.DataStore
 	store.Store
 
-	Log hclog.Logger
+	log hclog.Logger
 }
 
 // Key creation constants for items and indices
 // NOTE: changing any of these constants will require migrating store data
 const (
-	// NOTE: prefer a printable character not part of a conforming URI
+	// NOTE: prefer a printable character not part of a conforming URI for debugability
 	Delim = "|"
 
 	// Object identifiers
-	// NOTE: these could be an enum if readability is not important for debugability
 	indexKeyID = "I"
 
 	BundleKeyID = "B"
@@ -59,13 +58,9 @@ const (
 
 // Key creation values
 var (
-	storeLoaded = false
-
 	// NOTE: this is one bit greater than the delimiter - it is used to end
 	// a range to get all key values for a given prefix.
 	Delend = string(Delim[0] + 1)
-
-	// End of transaction marker enables watchers to identify operations in a transaction
 
 	// Key creation and comparison values
 	BundlePrefix    = fmt.Sprintf("%s%s", BundleKeyID, Delim)
@@ -92,5 +87,5 @@ var (
 
 // New returns an initialized store.
 func New(ds datastore.DataStore, st store.Store, logger hclog.Logger) *Shim {
-	return &Shim{DataStore: ds, Store: st, Log: logger}
+	return &Shim{DataStore: ds, Store: st, log: logger}
 }

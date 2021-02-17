@@ -1,4 +1,3 @@
-// Package store implements a datastore shim with the proposed new store interface.
 package store
 
 import (
@@ -65,7 +64,7 @@ func (s *Shim) CreateRegistrationEntry(ctx context.Context,
 	k := entryKey(e.EntryId)
 	v, err := proto.Marshal(e)
 	if err != nil {
-		// Return gRPC InvalidArgument error?
+		// TODO Return gRPC InvalidArgument error?
 		return nil, err
 	}
 
@@ -385,7 +384,7 @@ func (s *Shim) listRegistrationEntries(ctx context.Context, revision int64,
 
 			if len(res.Kvs) != 1 {
 				if len(res.Kvs) > 1 {
-					s.Log.Error(fmt.Sprintf("Too many entries %v", res.Kvs))
+					s.log.Error(fmt.Sprintf("Too many entries %v", res.Kvs))
 				}
 				continue
 			}
@@ -402,6 +401,8 @@ func (s *Shim) listRegistrationEntries(ctx context.Context, revision int64,
 				}
 			}
 
+			// TODO remove the overly optimistic federation results from above
+
 			resp.Entries = append(resp.Entries, e)
 			lastKey = entryKey(e.EntryId)
 
@@ -414,9 +415,6 @@ func (s *Shim) listRegistrationEntries(ctx context.Context, revision int64,
 		}
 	} else {
 		// No filters, get all registered entries up to limit
-
-		// Pagination requested or cache does not support the requested rev
-		// TODO pagination support requires a sorted array of IDs be maintained with the cache entries.
 		res, err := s.Store.Get(ctx, &store.GetRequest{Key: key, End: AllEntries, Limit: limit, Revision: rev})
 		if err != nil {
 			return nil, 0, err
@@ -973,7 +971,7 @@ func (s *Shim) entrySelectorMatch(entry *common.RegistrationEntry, req *datastor
 		}
 		return true
 	} else {
-		s.Log.Warn(fmt.Sprintf("Unknown match %v", req.Match))
+		s.log.Warn(fmt.Sprintf("Unknown match %v", req.Match))
 	}
 	return false
 }
