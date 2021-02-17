@@ -1,4 +1,4 @@
-// Package etcd implements KV backend Store
+// Package etcd implements KV backend store.
 package etcd
 
 import (
@@ -26,8 +26,8 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// Plugin constants
 const (
+	// PluginName is the name of this store plugin implementation.
 	PluginName = "etcd"
 )
 
@@ -42,6 +42,7 @@ var (
 
 	etcdError = errs.Class("store-etcd")
 
+	// Default values may be overridden by configuration
 	dialTimeout    = 5 * time.Second
 	requestTimeout = 10 * time.Second
 
@@ -49,7 +50,7 @@ var (
 	writeResponseDelay = 0
 )
 
-// Plugin is a Store plugin implemented via etcd
+// Plugin is a store plugin implemented with etcd.
 type Plugin struct {
 	store.UnsafeStoreServer
 
@@ -59,12 +60,12 @@ type Plugin struct {
 	log  hclog.Logger
 }
 
-// New creates a new etcd plugin struct
+// New creates a new etcd plugin.
 func New() *Plugin {
 	return &Plugin{}
 }
 
-// BuiltIn designates this as a native plugins
+// BuiltIn designates this plugin as part of the core product.
 func BuiltIn() catalog.Plugin {
 	return builtin(New())
 }
@@ -73,7 +74,6 @@ func builtin(p *Plugin) catalog.Plugin {
 	return catalog.MakePlugin(PluginName, store.PluginServer(p))
 }
 
-// Configuration for the datastore
 // Pointers allow distinction between "unset" and "zero" values
 type configuration struct {
 	Endpoints          []string `hcl:"endpoints" json:"endpoints"`
@@ -94,16 +94,17 @@ type configuration struct {
 	LogOps bool `hcl:"log_ops" json:"log_ops"`
 }
 
-// GetPluginInfo returns etcd plugin information
+// GetPluginInfo returns etcd plugin information.
 func (*Plugin) GetPluginInfo(context.Context, *spi.GetPluginInfoRequest) (*spi.GetPluginInfoResponse, error) {
 	return &pluginInfo, nil
 }
 
-// SetLogger sets the plugin logger
+// SetLogger sets the plugin logger.
 func (st *Plugin) SetLogger(logger hclog.Logger) {
 	st.log = logger
 }
 
+// Validate checks the given plugin configuration.
 func (cfg *configuration) Validate() error {
 	if len(cfg.Endpoints) == 0 {
 		return errors.New("At least one endpoint must be set")
@@ -116,7 +117,7 @@ func (cfg *configuration) Validate() error {
 	return nil
 }
 
-// Configure parses HCL config payload into config struct and opens etcd connection
+// Configure parses HCL config into config struct, opens etcd connection, and initializes the cache.
 func (st *Plugin) Configure(ctx context.Context, req *spi.ConfigureRequest) (*spi.ConfigureResponse, error) {
 	st.log.Info("Configuring etcd store")
 
@@ -185,6 +186,40 @@ func (st *Plugin) Configure(ctx context.Context, req *spi.ConfigureRequest) (*sp
 	}
 
 	return &spi.ConfigureResponse{}, nil
+}
+
+// TODO explore opening multiple client connections for improved performance
+func (st *Plugin) openConnection(cfg *configuration, isReadOnly bool) error {
+	tlsInfo := transport.TLSInfo{
+		KeyFile:        cfg.ClientKeyPath,
+		CertFile:       cfg.ClientCertPath,
+		TrustedCAFile:  cfg.RootCAPath,
+		ClientCertAuth: true,
+	}
+
+	tls, err := tlsInfo.ClientConfig()
+	if err != nil {
+		return err
+	}
+
+	st.Etcd, err = clientv3.New(clientv3.Config{
+		Endpoints:   cfg.Endpoints,
+		DialTimeout: dialTimeout,
+		TLS:         tls,
+	})
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (st *Plugin) close() {
+	// TODO stop heartbeat routines?
+	if st.Etcd != nil {
+		// TODO close watchers first?
+		st.Etcd.Close()
+	}
 }
 
 // Get retrieves one or more items by key range.
@@ -320,38 +355,4 @@ func (st *Plugin) Set(ctx context.Context, req *store.SetRequest) (*store.SetRes
 // TODO figure out how to implement gRPC streaming with the current catalog bypass
 func (st *Plugin) Watch(ctx context.Context, req *store.WatchRequest) (*store.WatchResponse, error) {
 	return nil, nil
-}
-
-// TODO open multiple client connections for improved performance
-func (st *Plugin) openConnection(cfg *configuration, isReadOnly bool) error {
-	tlsInfo := transport.TLSInfo{
-		KeyFile:        cfg.ClientKeyPath,
-		CertFile:       cfg.ClientCertPath,
-		TrustedCAFile:  cfg.RootCAPath,
-		ClientCertAuth: true,
-	}
-
-	tls, err := tlsInfo.ClientConfig()
-	if err != nil {
-		return err
-	}
-
-	st.Etcd, err = clientv3.New(clientv3.Config{
-		Endpoints:   cfg.Endpoints,
-		DialTimeout: dialTimeout,
-		TLS:         tls,
-	})
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func (st *Plugin) close() {
-	// TODO stop heartbeat routines?
-	if st.Etcd != nil {
-		// TODO close watchers first?
-		st.Etcd.Close()
-	}
 }
