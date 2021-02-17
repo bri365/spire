@@ -65,7 +65,7 @@ func (s *Shim) CountBundles(ctx context.Context,
 
 	// Set range to all bundle keys
 	key := bundleKey("")
-	end := allBundles
+	end := AllBundles
 	res, err := s.Store.Get(ctx, &store.GetRequest{Key: key, End: end, CountOnly: true})
 	if err != nil {
 		return nil, err
@@ -272,7 +272,7 @@ func (s *Shim) listBundles(ctx context.Context, rev int64,
 
 	// Start with all bundle identifiers and limit of 0 (no limit)
 	key := bundleKey("")
-	end := allBundles
+	end := AllBundles
 	var limit int64
 
 	p := req.Pagination
@@ -455,6 +455,15 @@ func (s *Shim) updateBundle(ctx context.Context,
 	}
 
 	return &datastore.UpdateBundleResponse{Bundle: req.Bundle}, nil
+}
+
+// IsBundleKey returns true if the given key is a properly formatted bundle key.
+func IsBundleKey(key string) bool {
+	items := strings.Split(key, Delim)
+	if len(items) == 2 && items[0] == BundleKeyID {
+		return true
+	}
+	return false
 }
 
 // bundleKey returns a string formatted key for a bundle

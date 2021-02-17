@@ -2,6 +2,7 @@ package etcd
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	spi "github.com/spiffe/spire/proto/spire/common/plugin"
@@ -16,6 +17,7 @@ func (s *PluginSuite) TestZHeartbeat() {
 		client_key_path = "/Users/brian/Dev/scytale/performance-tests/etcd/tf-etcd-vsphere/certs/client-key.pem"
 		heartbeat_interval = 3
 		write_response_delay = 20
+		reset_cache = true
 		`,
 	}
 
@@ -23,6 +25,7 @@ func (s *PluginSuite) TestZHeartbeat() {
 	s.st.Configure(context.TODO(), cfg)
 
 	// Let a few heartbeats happen
-	time.Sleep(0 * time.Second)
+	fmt.Printf("Sleeping for a few heartbeats")
+	time.Sleep(5 * time.Second)
 	s.Require().NoError(nil)
 }

@@ -75,9 +75,9 @@ var (
 	tokenPrefix     = fmt.Sprintf("%s%s", tokenKeyID, Delim)
 	TxPrefix        = fmt.Sprintf("%s%s", txKeyID, Delim)
 
-	allBundles   = fmt.Sprintf("%s%s", BundleKeyID, Delend)
-	allEntries   = fmt.Sprintf("%s%s", EntryKeyID, Delend)
-	allNodes     = fmt.Sprintf("%s%s", NodeKeyID, Delend)
+	AllBundles   = fmt.Sprintf("%s%s", BundleKeyID, Delend)
+	AllEntries   = fmt.Sprintf("%s%s", EntryKeyID, Delend)
+	AllNodes     = fmt.Sprintf("%s%s", NodeKeyID, Delend)
 	allSelectors = fmt.Sprintf("%s%s", selKeyID, Delend)
 	allTokens    = fmt.Sprintf("%s%s", tokenKeyID, Delend)
 

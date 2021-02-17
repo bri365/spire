@@ -44,7 +44,7 @@ type cacheIndex struct {
 // Bulk loading is performed on the same store revision for consistency.
 // After the initial bulk load, watcher routines are started to
 // continually update the cache as store updates are processed.
-func (st *Plugin) initialize() error {
+func (st *Plugin) initializeCache() error {
 	// rev is both the heartbeat ID for this server as well as the initial cache store revision
 	rev, err := st.StartHeartbeatService()
 	if err != nil {
@@ -76,7 +76,7 @@ func (st *Plugin) initialize() error {
 		st.mu.RLock()
 		st.storeRevision = rev
 		st.cacheInitialized = true
-		st.printCache("init")
+		// st.printCache("init")
 		st.mu.RUnlock()
 
 		st.log.Info("cache initialized")
@@ -85,6 +85,18 @@ func (st *Plugin) initialize() error {
 	// TODO handle exit conditions from the five previous routines
 
 	return nil
+}
+
+// ResetCache returns the cache to an uninitialized state.
+func (st *Plugin) resetCache() {
+	st.etcd.Close()
+	st.mu.Lock()
+	st.cacheInitialized = false
+	st.cache = make(map[string]*store.KeyValue, initialCacheSize)
+	st.bundleIndex = &cacheIndex{Keys: []string{}}
+	st.entryIndex = &cacheIndex{Keys: []string{}}
+	st.nodeIndex = &cacheIndex{Keys: []string{}}
+	st.mu.Unlock()
 }
 
 func (st *Plugin) printCache(s string) {
@@ -168,7 +180,7 @@ func (st *Plugin) watchChanges(key string, rev int64, ci *cacheIndex) error {
 		st.mu.Lock()
 
 		for _, e := range w.Events {
-			fmt.Printf("Watch: %s %s\n", e.Type, e.Kv.Key)
+			// fmt.Printf("Watch: %s %s\n", e.Type, e.Kv.Key)
 			k := string(e.Kv.Key)
 			if e.Type == mvccpb.DELETE {
 				delete(st.cache, k)
@@ -200,31 +212,61 @@ func (st *Plugin) watchChanges(key string, rev int64, ci *cacheIndex) error {
 // insertIndexKey inserts the given key into the given index if it does not already exist.
 // This function must be called with st.mu.Lock() already held.
 func (st *Plugin) insertIndexKey(ci *cacheIndex, key string) {
-	fmt.Printf("iIK %s %v\n", key, ci.Keys)
 	i := sort.SearchStrings(ci.Keys, key)
 	if i < len(ci.Keys) && ci.Keys[i] == key {
-		fmt.Printf("iIK %s already exists\n", key)
+		// Already exists
 		return
 	}
 	ci.Keys = append(ci.Keys, "")
 	copy(ci.Keys[i+1:], ci.Keys[i:])
 	ci.Keys[i] = key
 	ci.Count = len(ci.Keys)
-	st.printCache("ik")
+	// st.printCache("ik")
 	return
 }
 
 // removeIndexKey deletes the given key from the given index if it exists.
 // This function must be called with st.mu.Lock() already held.
 func (st *Plugin) removeIndexKey(ci *cacheIndex, key string) {
-	fmt.Printf("rIK %s %v\n", key, ci.Keys)
 	i := sort.SearchStrings(ci.Keys, key)
 	if i < len(ci.Keys) && ci.Keys[i] == key {
 		ci.Keys = append(ci.Keys[:i], ci.Keys[i+1:]...)
 		ci.Count = len(ci.Keys)
-		st.printCache("rk")
+		// st.printCache("rk")
 		return
 	}
-	fmt.Printf("rIK %s not found\n", key)
+	// Not found
 	return
+}
+
+// findIndexKeyEnd returns a slice of keys from the given cache index bounded by key and end.
+// This function must be called with st.mu.RLock() already held.
+func (st *Plugin) findIndexKeyEnd(key, end string) []string {
+	var ci *cacheIndex
+	if ss.IsBundleKey(key) {
+		ci = st.bundleIndex
+	} else if ss.IsEntryKey(key) {
+		ci = st.entryIndex
+	} else if ss.IsNodeKey(key) {
+		ci = st.nodeIndex
+	} else {
+		st.log.Error("Unknown key", "key", key)
+		return []string{}
+	}
+
+	// Locate the index offsets for the beginning and end of the range
+	start := sort.SearchStrings(ci.Keys, key)
+	finish := sort.SearchStrings(ci.Keys, end)
+
+	if start > finish {
+		st.log.Error("Invalid range", "key", key, "end", end)
+		return []string{}
+	}
+
+	if start == ci.Count {
+		// not found
+		return []string{}
+	}
+
+	return ci.Keys[start:finish]
 }

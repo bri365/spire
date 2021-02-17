@@ -100,9 +100,10 @@ type configuration struct {
 	ClientCertPath     string   `hcl:"client_cert_path" json:"client_cert_path"`
 	ClientKeyPath      string   `hcl:"client_key_path" json:"client_key_path"`
 	DialTimeout        *int     `hcl:"dial_timeout" json:"dial_timeout"`
-	DisableCache       *bool    `hcl:"disable_cache" json:"disable_cache"`
 	HeartbeatInterval  *int     `hcl:"heartbeat_interval" json:"heartbeat_interval"`
 	WriteResponseDelay *int     `hcl:"write_response_delay" json:"write_response_delay"`
+	DisableCache       *bool    `hcl:"disable_cache" json:"disable_cache"`
+	ResetCache         *bool    `hcl:"reset_cache" json:"reset_cache"`
 }
 
 // GetPluginInfo returns etcd plugin information
@@ -113,7 +114,6 @@ func (*Plugin) GetPluginInfo(context.Context, *spi.GetPluginInfoRequest) (*spi.G
 // SetLogger sets the plugin logger
 func (st *Plugin) SetLogger(logger hclog.Logger) {
 	st.log = logger
-	fmt.Println("Logger configured")
 }
 
 func (cfg *configuration) Validate() error {
@@ -157,6 +157,10 @@ func (st *Plugin) Configure(ctx context.Context, req *spi.ConfigureRequest) (*sp
 		writeResponseDelay = *cfg.WriteResponseDelay
 	}
 
+	if cfg.ResetCache != nil && *cfg.ResetCache {
+		st.resetCache()
+	}
+
 	// TODO set proper logging for etcd client
 	// NOTE: etcd client is noisy
 	// clientv3.SetLogger(grpclog.NewLoggerV2(os.Stdout, os.Stdout, os.Stdout))
@@ -197,7 +201,7 @@ func (st *Plugin) openConnection(cfg *configuration, isReadOnly bool) error {
 		"heartbeat interval", st.heartbeatInterval,
 	)
 
-	err = st.initialize()
+	err = st.initializeCache()
 	return nil
 }
 
@@ -212,8 +216,12 @@ func (st *Plugin) close() {
 // Get retrieves one or more items by key range.
 func (st *Plugin) Get(ctx context.Context, req *store.GetRequest) (*store.GetResponse, error) {
 	if st.cacheInitialized {
+		// NOTE: watch updates create new objects and update the cache pointers
+		// to reflect the newly created objects; copying the pointers here is safe
+		// because the objects are either unchanged or no longer referenced in the
+		// cache and will not be freed until we release them.
 		if req.End == "" {
-			// Single key
+			// Single key (e.g. fetch operations)
 			if _, ok := st.cache[req.Key]; ok {
 				st.mu.RLock()
 				resp := &store.GetResponse{
@@ -223,11 +231,33 @@ func (st *Plugin) Get(ctx context.Context, req *store.GetRequest) (*store.GetRes
 					Total:    1,
 				}
 				st.mu.RUnlock()
-				fmt.Printf("Get (cached): %s\n", req.Key)
+				// fmt.Printf("Get (cached single): %s\n", req.Key)
 				return resp, nil
 			}
 		} else {
-			// Range of keys
+			// Range of keys (e.g. list operations)
+			st.mu.RLock()
+			keys := st.findIndexKeyEnd(req.Key, req.End)
+			if len(keys) > 0 {
+				resp := &store.GetResponse{
+					Kvs:      []*store.KeyValue{},
+					Revision: st.storeRevision,
+					Total:    int64(len(keys)),
+				}
+				if req.Limit > 0 && resp.Total > req.Limit {
+					resp.More = true
+				}
+				for i, k := range keys {
+					if req.Limit > 0 && int64(i) == req.Limit {
+						break
+					}
+					resp.Kvs = append(resp.Kvs, st.cache[k])
+				}
+				st.mu.RUnlock()
+				// fmt.Printf("Get (cached range): %s %s %d\n", req.Key, req.End, resp.Total)
+				return resp, nil
+			}
+			st.mu.RUnlock()
 		}
 	}
 
@@ -246,7 +276,6 @@ func (st *Plugin) Get(ctx context.Context, req *store.GetRequest) (*store.GetRes
 		return nil, err
 	}
 
-	fmt.Printf("Get: %s %s %d\n", req.Key, req.End, len(res.Kvs))
 	kvs := []*store.KeyValue{}
 	for _, kv := range res.Kvs {
 		kvs = append(kvs, &store.KeyValue{
@@ -301,7 +330,6 @@ func (st *Plugin) Set(ctx context.Context, req *store.SetRequest) (*store.SetRes
 			}
 
 			// Add the operation (Operation_COMPARE has no operation)
-			fmt.Printf("Set: %s %s %s\n", element.Operation, kv.Key, kv.End)
 			if element.Operation == store.Operation_DELETE {
 				opts := []clientv3.OpOption{}
 				if kv.End != "" {
@@ -330,7 +358,6 @@ func (st *Plugin) Set(ctx context.Context, req *store.SetRequest) (*store.SetRes
 		return nil, status.Error(codes.Unknown, fmt.Sprintf("%v %s", err, res))
 	}
 	if !t.Succeeded {
-		fmt.Printf("Set: tx failed\n")
 		return nil, status.Error(codes.Aborted, "store-etcd: missing or incorrect version")
 		// return nil, status.Error(codes.Aborted, fmt.Sprintf("%s %v", res, t.Responses))
 	}

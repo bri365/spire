@@ -29,7 +29,7 @@ func (s *Shim) CountAttestedNodes(ctx context.Context,
 
 	// Set range to all node keys
 	key := nodeKey("")
-	end := allNodes
+	end := AllNodes
 
 	res, err := s.Store.Get(ctx, &store.GetRequest{Key: key, End: end, CountOnly: true})
 	if err != nil {
@@ -204,7 +204,7 @@ func (s *Shim) listAttestedNodes(ctx context.Context, revision int64,
 	// subsequent calls to ensure transactional consistency of index read operations.
 	rev := revision
 	if rev == 0 {
-		res, err := s.Store.Get(ctx, &store.GetRequest{Key: NodePrefix, End: allNodes, Limit: 1})
+		res, err := s.Store.Get(ctx, &store.GetRequest{Key: NodePrefix, End: AllNodes, Limit: 1})
 		if err != nil {
 			return nil, 0, err
 		}
@@ -362,7 +362,7 @@ func (s *Shim) listAttestedNodes(ctx context.Context, revision int64,
 
 		// Pagination requested or cache does not support the requested rev
 		// TODO pagination support requires a sorted array of IDs be maintained with the cache entries.
-		res, err := s.Store.Get(ctx, &store.GetRequest{Key: key, End: allNodes, Limit: limit, Revision: rev})
+		res, err := s.Store.Get(ctx, &store.GetRequest{Key: key, End: AllNodes, Limit: limit, Revision: rev})
 		if err != nil {
 			return nil, 0, err
 		}
@@ -630,6 +630,15 @@ func (s *Shim) SetNodeSelectors(ctx context.Context,
 	}
 
 	return &datastore.SetNodeSelectorsResponse{}, nil
+}
+
+// IsNodeKey returns true if the given key is a properly formatted attested node key.
+func IsNodeKey(key string) bool {
+	items := strings.Split(key, Delim)
+	if len(items) == 2 && items[0] == NodeKeyID {
+		return true
+	}
+	return false
 }
 
 // nodeKey returns a string formatted key for an attested node.

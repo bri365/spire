@@ -1,4 +1,5 @@
 #!/bin/bash
 
 log-info "running tests against etcd..."
+# ./etcd.test -test.v || fail-now "tests failed"
 ./etcd.test || fail-now "tests failed"

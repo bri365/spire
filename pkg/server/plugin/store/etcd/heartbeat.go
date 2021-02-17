@@ -40,7 +40,7 @@ func (st *Plugin) StartHeartbeatService() (int64, error) {
 	}
 
 	st.log.Info(fmt.Sprintf("Starting heartbeat with id %d", rev))
-	fmt.Printf("Starting heartbeat with id %d\n", rev)
+	// fmt.Printf("Starting heartbeat with id %d\n", rev)
 	go st.heartbeatReply(context.TODO(), rev+1)
 	go st.heartbeatSend(rev + 1)
 
@@ -56,7 +56,6 @@ func (st *Plugin) heartbeatSend(rev int64) {
 	ticker := st.clock.Ticker(st.heartbeatInterval)
 	for t := range ticker.C {
 		st.log.Info(fmt.Sprintf("Sending heartbeat %q at %d", id, t.UnixNano()))
-		fmt.Printf("Sending heartbeat %q at %d\n", id, t.UnixNano())
 		st.sendHB(context.TODO(), id, "", t.UnixNano())
 	}
 }
@@ -92,7 +91,7 @@ func (st *Plugin) heartbeatReply(ctx context.Context, rev int64) {
 			if originator == id {
 				if responder == "" {
 					st.log.Info(fmt.Sprintf("self heartbeat in %.2fms", delta))
-					fmt.Printf("self heartbeat in %.2fms\n", delta)
+					// fmt.Printf("self heartbeat in %.2fms\n", delta)
 				} else {
 					st.log.Info(fmt.Sprintf("reply heartbeat from %s in %.2fms", responder, delta))
 				}
