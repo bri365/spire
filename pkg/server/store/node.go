@@ -29,7 +29,7 @@ func (s *Shim) CountAttestedNodes(ctx context.Context,
 
 	// Set range to all node keys
 	key := nodeKey("")
-	end := allNodes
+	end := AllNodes
 
 	res, err := s.Store.Get(ctx, &store.GetRequest{Key: key, End: end, CountOnly: true})
 	if err != nil {
@@ -215,7 +215,7 @@ func (s *Shim) listAttestedNodes(ctx context.Context, revision int64,
 	// subsequent calls to ensure transactional consistency of index read operations.
 	rev := revision
 	if rev == 0 {
-		res, err := s.Store.Get(ctx, &store.GetRequest{Key: nodePrefix, End: allNodes, Limit: 1})
+		res, err := s.Store.Get(ctx, &store.GetRequest{Key: NodePrefix, End: AllNodes, Limit: 1})
 		if err != nil {
 			return nil, 0, err
 		}
@@ -299,7 +299,7 @@ func (s *Shim) listAttestedNodes(ctx context.Context, revision int64,
 	if p != nil {
 		limit = int64(p.PageSize)
 		if len(p.Token) > 0 {
-			if len(p.Token) < 5 || p.Token[0:2] != nodePrefix {
+			if len(p.Token) < 5 || p.Token[0:2] != NodePrefix {
 				return nil, 0, status.Errorf(codes.InvalidArgument, "could not parse token '%s'", p.Token)
 			}
 			// TODO one bit larger than token
@@ -390,7 +390,7 @@ func (s *Shim) listAttestedNodes(ctx context.Context, revision int64,
 
 		// Pagination requested or cache does not support the requested rev
 		// TODO pagination support requires a sorted array of IDs be maintained with the cache entries.
-		res, err := s.Store.Get(ctx, &store.GetRequest{Key: key, End: allNodes, Limit: limit, Revision: rev})
+		res, err := s.Store.Get(ctx, &store.GetRequest{Key: key, End: AllNodes, Limit: limit, Revision: rev})
 		if err != nil {
 			return nil, 0, err
 		}
@@ -669,13 +669,13 @@ func (s *Shim) SetNodeSelectors(ctx context.Context,
 // nodeKey returns a string formatted key for an attested node.
 // e.g. "N|spiffie://example.com/clusterA/nodeN"
 func nodeKey(id string) string {
-	return fmt.Sprintf("%s%s", nodePrefix, id)
+	return fmt.Sprintf("%s%s", NodePrefix, id)
 }
 
 // nodeIDFromKey returns the node id from the given node key.
 func nodeIDFromKey(key string) (string, error) {
-	items := strings.Split(key, delim)
-	if len(items) != 2 || items[0] != nodeKeyID {
+	items := strings.Split(key, Delim)
+	if len(items) != 2 || items[0] != NodeKeyID {
 		return "", fmt.Errorf("invalid node key: %s", key)
 	}
 	return items[1], nil
@@ -684,12 +684,12 @@ func nodeIDFromKey(key string) (string, error) {
 // nodeAdtKey returns a string formatted key for an attested node indexed by attestation data type.
 // e.g. "NI|ADT|aws-tag|spiffie://example.com/clusterA/nodeN"
 func nodeAdtKey(id, adt string) string {
-	return fmt.Sprintf("%s%s%s%s%s%s", nodeIndex, ADT, delim, adt, delim, id)
+	return fmt.Sprintf("%s%s%s%s%s%s", nodeIndex, ADT, Delim, adt, Delim, id)
 }
 
 // nodeAdtID returns the attested node id from the given attestation data type (ADT) index key.
 func nodeAdtID(key string) (string, error) {
-	items := strings.Split(key, delim)
+	items := strings.Split(key, Delim)
 	// TODO additional checks to ensure a properly formatted index?
 	if len(items) != 4 {
 		return "", fmt.Errorf("invalid attestation data type index key: %s", key)
@@ -701,8 +701,8 @@ func nodeAdtID(key string) (string, error) {
 // A specific store revision may be supplied for transactional consistency; 0 = current revision
 // Use of a map facilitates easier intersection with other filters
 func (s *Shim) nodeAdtMap(ctx context.Context, rev int64, adt string) (map[string]bool, error) {
-	key := fmt.Sprintf("%s%s%s%s%s", nodeIndex, ADT, delim, adt, delim)
-	end := fmt.Sprintf("%s%s%s%s%s", nodeIndex, ADT, delim, adt, delend)
+	key := fmt.Sprintf("%s%s%s%s%s", nodeIndex, ADT, Delim, adt, Delim)
+	end := fmt.Sprintf("%s%s%s%s%s", nodeIndex, ADT, Delim, adt, Delend)
 
 	res, err := s.Store.Get(ctx, &store.GetRequest{Key: key, End: end, Revision: rev})
 	if err != nil {
@@ -728,12 +728,12 @@ func nodeBanKey(id, csn string) string {
 	if csn == "" {
 		banned = 1
 	}
-	return fmt.Sprintf("%s%s%s%d%s%s", nodeIndex, BAN, delim, banned, delim, id)
+	return fmt.Sprintf("%s%s%s%d%s%s", nodeIndex, BAN, Delim, banned, Delim, id)
 }
 
 // nodeBanID returns the attested node id from the given node banned (BAN) index key.
 func nodeBanID(key string) (string, error) {
-	items := strings.Split(key, delim)
+	items := strings.Split(key, Delim)
 	if len(items) != 4 {
 		return "", fmt.Errorf("invalid node banned index key: %s", key)
 	}
@@ -748,8 +748,8 @@ func (s *Shim) nodeBanMap(ctx context.Context, rev int64, ban bool) (map[string]
 	if ban {
 		b = 1
 	}
-	key := fmt.Sprintf("%s%s%s%d%s", nodeIndex, BAN, delim, b, delim)
-	end := fmt.Sprintf("%s%s%s%d", nodeIndex, BAN, delim, b+1)
+	key := fmt.Sprintf("%s%s%s%d%s", nodeIndex, BAN, Delim, b, Delim)
+	end := fmt.Sprintf("%s%s%s%d", nodeIndex, BAN, Delim, b+1)
 
 	res, err := s.Store.Get(ctx, &store.GetRequest{Key: key, End: end, Revision: rev})
 	if err != nil {
@@ -772,12 +772,12 @@ func (s *Shim) nodeBanMap(ctx context.Context, rev int64, ban bool) (map[string]
 // e.g. "NI|EXP|1611907252|spiffie://example.com/clusterA/nodeN"
 // NOTE: %d without leading zeroes for time.Unix will work for the next ~250 years
 func nodeExpKey(id string, exp int64) string {
-	return fmt.Sprintf("%s%s%s%d%s%s", nodeIndex, EXP, delim, exp, delim, id)
+	return fmt.Sprintf("%s%s%s%d%s%s", nodeIndex, EXP, Delim, exp, Delim, id)
 }
 
 // nodeExpID returns the attested node id from the given node expiry (EXP) index key.
 func nodeExpID(key string) (string, error) {
-	items := strings.Split(key, delim)
+	items := strings.Split(key, Delim)
 	if len(items) != 4 {
 		return "", fmt.Errorf("invalid node expiry index key: %s", key)
 	}
@@ -791,11 +791,11 @@ func (s *Shim) nodeExpMap(ctx context.Context, rev, exp int64, after bool) (map[
 	// Set range to all index keys after or before the given time
 	key, end := "", ""
 	if after {
-		key = fmt.Sprintf("%s%s%s%d", nodeIndex, EXP, delim, exp)
-		end = fmt.Sprintf("%s%s%s", nodeIndex, EXP, delend)
+		key = fmt.Sprintf("%s%s%s%d", nodeIndex, EXP, Delim, exp)
+		end = fmt.Sprintf("%s%s%s", nodeIndex, EXP, Delend)
 	} else {
-		key = fmt.Sprintf("%s%s%s", nodeIndex, EXP, delim)
-		end = fmt.Sprintf("%s%s%s%d", nodeIndex, EXP, delim, exp)
+		key = fmt.Sprintf("%s%s%s", nodeIndex, EXP, Delim)
+		end = fmt.Sprintf("%s%s%s%d", nodeIndex, EXP, Delim, exp)
 	}
 
 	res, err := s.Store.Get(ctx, &store.GetRequest{Key: key, End: end, Revision: rev})
@@ -818,12 +818,12 @@ func (s *Shim) nodeExpMap(ctx context.Context, rev, exp int64, after bool) (map[
 // nodeSelKey returns a string formatted key for an attested node indexed by selector type and value.
 // e.g. "NI|TVI|a-type|a-value|spiffie://example.com/clusterA/nodeN"
 func nodeSelKey(id string, s *common.Selector) string {
-	return fmt.Sprintf("%s%s%s%s%s%s%s%s", nodeIndex, TVI, delim, s.Type, delim, s.Value, delim, id)
+	return fmt.Sprintf("%s%s%s%s%s%s%s%s", nodeIndex, TVI, Delim, s.Type, Delim, s.Value, Delim, id)
 }
 
 // nodeSelID returns the attested node id from the given type-value (TVI) index key
 func nodeSelID(key string) (string, error) {
-	items := strings.Split(key, delim)
+	items := strings.Split(key, Delim)
 	if len(items) != 5 {
 		return "", fmt.Errorf("invalid node selector index key: %s", key)
 	}
@@ -835,8 +835,8 @@ func nodeSelID(key string) (string, error) {
 // Use of a map facilitates easier intersection with other filters
 func (s *Shim) nodeSelMap(ctx context.Context, rev int64, sel *common.Selector) (map[string]bool, error) {
 	// Set range to all index keys for this type and value
-	key := fmt.Sprintf("%s%s%s%s%s%s%s", nodeIndex, TVI, delim, sel.Type, delim, sel.Value, delim)
-	end := fmt.Sprintf("%s%s%s%s%s%s%s", nodeIndex, TVI, delim, sel.Type, delim, sel.Value, delend)
+	key := fmt.Sprintf("%s%s%s%s%s%s%s", nodeIndex, TVI, Delim, sel.Type, Delim, sel.Value, Delim)
+	end := fmt.Sprintf("%s%s%s%s%s%s%s", nodeIndex, TVI, Delim, sel.Type, Delim, sel.Value, Delend)
 
 	res, err := s.Store.Get(ctx, &store.GetRequest{Key: key, End: end, Revision: rev})
 	if err != nil {

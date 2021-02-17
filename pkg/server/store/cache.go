@@ -424,8 +424,8 @@ func (s *Shim) watchBundles(rev int64) error {
 		clientv3.WithProgressNotify(),
 		clientv3.WithRev(rev),
 	}
-	// Using bundleKeyID instead of bundlePrefix will also return index updates
-	bChan := s.Etcd.Watch(context.TODO(), bundlePrefix, opts...)
+	// Using BundleKeyID instead of BundlePrefix will also return index updates
+	bChan := s.Etcd.Watch(context.TODO(), BundlePrefix, opts...)
 	s.Log.Debug(fmt.Sprintf("Watching bundle updates from %d", rev))
 
 	for w := range bChan {
@@ -483,7 +483,7 @@ func (s *Shim) watchEntries(rev int64) error {
 		clientv3.WithProgressNotify(),
 		clientv3.WithRev(rev),
 	}
-	// Using entryKeyID instead of entryPrefix will also return index updates
+	// Using EntryKeyID instead of entryPrefix will also return index updates
 	eChan := s.Etcd.Watch(context.TODO(), entryPrefix, opts...)
 	s.Log.Debug(fmt.Sprintf("Watching entry updates from %d", rev))
 
@@ -541,8 +541,8 @@ func (s *Shim) watchNodes(rev int64) error {
 		clientv3.WithProgressNotify(),
 		clientv3.WithRev(rev),
 	}
-	// Using nodeKeyID instead of nodePrefix will also return index updates
-	nChan := s.Etcd.Watch(context.TODO(), nodePrefix, opts...)
+	// Using NodeKeyID instead of NodePrefix will also return index updates
+	nChan := s.Etcd.Watch(context.TODO(), NodePrefix, opts...)
 	s.Log.Debug(fmt.Sprintf("Watching node updates from %d", rev))
 
 	for w := range nChan {
@@ -694,7 +694,7 @@ func (s *Shim) hbReply(ctx context.Context, rev int64) {
 		clientv3.WithProgressNotify(),
 		clientv3.WithRev(rev),
 	}
-	hChan := s.Etcd.Watch(context.Background(), heartbeatPrefix, opts...)
+	hChan := s.Etcd.Watch(context.Background(), HeartbeatPrefix, opts...)
 
 	id := fmt.Sprintf("%d", rev)
 	for w := range hChan {
@@ -741,7 +741,7 @@ func (s *Shim) sendHB(ctx context.Context, orig, resp string, ts int64) (int64, 
 		return 0, err
 	}
 
-	key := fmt.Sprintf("%s%s%s%s", heartbeatPrefix, orig, delim, resp)
+	key := fmt.Sprintf("%s%s%s%s", HeartbeatPrefix, orig, Delim, resp)
 	value := fmt.Sprintf("%d", ts)
 	res, err := s.Etcd.Put(ctx, key, value, clientv3.WithLease(lease.ID))
 	if err != nil {
@@ -758,7 +758,7 @@ func (s *Shim) parseHB(hb *clientv3.Event) (string, string, int64) {
 		s.Log.Error(fmt.Sprintf("Invalid heartbeat payload %q %v", string(hb.Kv.Value), hb))
 		return "", "", 0
 	}
-	items := strings.Split(string(hb.Kv.Key), delim)
+	items := strings.Split(string(hb.Kv.Key), Delim)
 	if len(items) == 2 {
 		return items[1], "", ts
 	}

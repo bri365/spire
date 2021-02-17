@@ -6,7 +6,7 @@
 // or "E|5fee2e4a-1fe3-4bf3-b4f0-55eaf268c12a" for a registration entry
 //
 // Indices are stored with a Key string and no Value. Index keys are formatted as
-// <I><item key><delim><index field identifier>[...<delim><field value>]<delim><unique item identifier>
+// <item key><I><delim><index field identifier>[...<delim><field value>]<delim><unique item identifier>
 // e.g. "NI|EXP|1611907252|spiffie://example.com/clusterA/nodeN" for an attested node expiry
 //
 package store
@@ -52,16 +52,16 @@ type Configuration struct {
 // NOTE: changing any of these constants will require migrating store data
 const (
 	// NOTE: prefer a printable character not part of a conforming URI
-	delim = "|"
+	Delim = "|"
 
 	// Object identifiers
 	// NOTE: these could be an enum if readability is not important for debugability
 	indexKeyID = "I"
 
-	bundleKeyID = "B"
-	entryKeyID  = "E"
+	BundleKeyID = "B"
+	EntryKeyID  = "E"
 	heartbeatID = "H"
-	nodeKeyID   = "N"
+	NodeKeyID   = "N"
 	selKeyID    = "S"
 	tokenKeyID  = "T"
 	txKeyID     = "X"
@@ -83,31 +83,31 @@ var (
 
 	// NOTE: this is one bit greater than the delimiter - it is used to end
 	// a range to get all key values for a given prefix.
-	delend = string(delim[0] + 1)
+	Delend = string(Delim[0] + 1)
 
 	// End of transaction marker enables watchers to identify operations in a transaction
 
 	// Key creation and comparison values
-	bundlePrefix    = fmt.Sprintf("%s%s", bundleKeyID, delim)
-	entryPrefix     = fmt.Sprintf("%s%s", entryKeyID, delim)
-	heartbeatPrefix = fmt.Sprintf("%s%s", heartbeatID, delim)
-	nodePrefix      = fmt.Sprintf("%s%s", nodeKeyID, delim)
-	tokenPrefix     = fmt.Sprintf("%s%s", tokenKeyID, delim)
-	TxPrefix        = fmt.Sprintf("%s%s", txKeyID, delim)
+	BundlePrefix    = fmt.Sprintf("%s%s", BundleKeyID, Delim)
+	entryPrefix     = fmt.Sprintf("%s%s", EntryKeyID, Delim)
+	HeartbeatPrefix = fmt.Sprintf("%s%s", heartbeatID, Delim)
+	NodePrefix      = fmt.Sprintf("%s%s", NodeKeyID, Delim)
+	tokenPrefix     = fmt.Sprintf("%s%s", tokenKeyID, Delim)
+	TxPrefix        = fmt.Sprintf("%s%s", txKeyID, Delim)
 
-	allBundles   = fmt.Sprintf("%s%s", bundleKeyID, delend)
-	allEntries   = fmt.Sprintf("%s%s", entryKeyID, delend)
-	allNodes     = fmt.Sprintf("%s%s", nodeKeyID, delend)
-	allSelectors = fmt.Sprintf("%s%s", selKeyID, delend)
-	allTokens    = fmt.Sprintf("%s%s", tokenKeyID, delend)
+	AllBundles   = fmt.Sprintf("%s%s", BundleKeyID, Delend)
+	AllEntries   = fmt.Sprintf("%s%s", EntryKeyID, Delend)
+	AllNodes     = fmt.Sprintf("%s%s", NodeKeyID, Delend)
+	allSelectors = fmt.Sprintf("%s%s", selKeyID, Delend)
+	allTokens    = fmt.Sprintf("%s%s", tokenKeyID, Delend)
 
-	bundleIndex = fmt.Sprintf("%s%s%s", bundleKeyID, indexKeyID, delim)
-	entryIndex  = fmt.Sprintf("%s%s%s", entryKeyID, indexKeyID, delim)
-	nodeIndex   = fmt.Sprintf("%s%s%s", nodeKeyID, indexKeyID, delim)
-	tokenIndex  = fmt.Sprintf("%s%s%s", tokenKeyID, indexKeyID, delim)
+	bundleIndex = fmt.Sprintf("%s%s%s", BundleKeyID, indexKeyID, Delim)
+	entryIndex  = fmt.Sprintf("%s%s%s", EntryKeyID, indexKeyID, Delim)
+	nodeIndex   = fmt.Sprintf("%s%s%s", NodeKeyID, indexKeyID, Delim)
+	tokenIndex  = fmt.Sprintf("%s%s%s", tokenKeyID, indexKeyID, Delim)
 
-	nodeExpPrefix = fmt.Sprintf("%s%s%s", nodeIndex, EXP, delim)
-	nodeExpAll    = fmt.Sprintf("%s%s%s", nodeIndex, EXP, delend)
+	nodeExpPrefix = fmt.Sprintf("%s%s%s", nodeIndex, EXP, Delim)
+	nodeExpAll    = fmt.Sprintf("%s%s%s", nodeIndex, EXP, Delend)
 )
 
 // New returns an initialized store.
