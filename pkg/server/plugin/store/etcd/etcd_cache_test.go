@@ -1,9 +1,9 @@
 package etcd
 
 import (
+	"context"
 	"time"
 
-	ss "github.com/spiffe/spire/pkg/server/store"
 	spi "github.com/spiffe/spire/proto/spire/common/plugin"
 )
 
@@ -19,8 +19,10 @@ func (s *PluginSuite) TestZHeartbeat() {
 		`,
 	}
 
-	s.st = s.newPlugin(cfg)
-	s.shim = ss.New(nil, s.st, s.shim.Log)
-	time.Sleep(4 * time.Second)
+	// Enable heartbeats
+	s.st.Configure(context.TODO(), cfg)
+
+	// Let a few heartbeats happen
+	time.Sleep(0 * time.Second)
 	s.Require().NoError(nil)
 }

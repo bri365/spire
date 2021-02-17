@@ -1,4 +1,4 @@
-// Package etcd implements KV backend Store
+// Package etcd implements KV backend store.
 package etcd
 
 import (
@@ -6,8 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
-	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -17,13 +15,11 @@ import (
 
 	"github.com/spiffe/spire/pkg/common/catalog"
 	"github.com/spiffe/spire/pkg/server/plugin/store"
-	ss "github.com/spiffe/spire/pkg/server/store"
 	spi "github.com/spiffe/spire/proto/spire/common/plugin"
 	pb "github.com/spiffe/spire/proto/spire/server/store"
 	"github.com/zeebo/errs"
 
 	"github.com/roguesoftware/etcd/clientv3"
-	"github.com/roguesoftware/etcd/mvcc/mvccpb"
 	"github.com/roguesoftware/etcd/pkg/transport"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/grpclog"
@@ -33,18 +29,6 @@ import (
 const (
 	// PluginName is the name of this store plugin implementation.
 	PluginName = "etcd"
-
-	// Default heartbeat interval in seconds
-	heartbeatDefaultInterval = 5
-
-	// Lifespan of heartbeat records in seconds before automatic deletion
-	heartbeatTTL = 1
-
-	// The number of cache entries to allocate on creation
-	initialCacheSize = 1024
-
-	// The number of records to load at a time during cache initialization
-	loadPageSize = 10000
 )
 
 var (
@@ -70,7 +54,10 @@ type Plugin struct {
 	store.UnsafeStoreServer
 
 	cache map[string]*store.KeyValue
-	index []string
+
+	bundleIndex *cacheIndex
+	entryIndex  *cacheIndex
+	nodeIndex   *cacheIndex
 
 	clock clock.Clock
 	etcd  *clientv3.Client
@@ -87,7 +74,9 @@ type Plugin struct {
 func New() *Plugin {
 	return &Plugin{
 		cache:             make(map[string]*store.KeyValue, initialCacheSize),
-		index:             make([]string, initialCacheSize),
+		bundleIndex:       &cacheIndex{Keys: []string{}},
+		entryIndex:        &cacheIndex{Keys: []string{}},
+		nodeIndex:         &cacheIndex{Keys: []string{}},
 		clock:             clock.New(),
 		cacheEnabled:      true,
 		heartbeatInterval: time.Duration(heartbeatDefaultInterval) * time.Second,
@@ -124,7 +113,7 @@ func (*Plugin) GetPluginInfo(context.Context, *spi.GetPluginInfoRequest) (*spi.G
 // SetLogger sets the plugin logger
 func (st *Plugin) SetLogger(logger hclog.Logger) {
 	st.log = logger
-	st.log.Info("Logger configured")
+	fmt.Println("Logger configured")
 }
 
 func (cfg *configuration) Validate() error {
@@ -220,276 +209,6 @@ func (st *Plugin) close() {
 	}
 }
 
-// initialize loads cache data and starts the watcher tasks.
-// Bulk loading is performed on the same store revision for consistency.
-// After the initial bulk load, watcher routines are started to
-// continually update the cache as store updates are processed.
-func (st *Plugin) initialize() error {
-	// Start with rev == 0 to retrieve from the latest store revision
-	var rev int64
-	var err error
-
-	st.StartHeartbeatService()
-	if err != nil {
-		return err
-	}
-
-	if st.cacheEnabled {
-		rev, err = st.loadItems(ss.BundleKeyID, 0)
-		if err != nil {
-			return err
-		}
-
-		_, err = st.loadItems(ss.EntryKeyID, rev)
-		if err != nil {
-			return err
-		}
-
-		_, err = st.loadItems(ss.NodeKeyID, rev)
-		if err != nil {
-			return err
-		}
-
-		go st.watchChanges(ss.BundlePrefix, rev+1)
-
-		go st.watchChanges(ss.EntryPrefix, rev+1)
-
-		go st.watchChanges(ss.NodePrefix, rev+1)
-
-		st.cacheInitialized = true
-		st.log.Info("cache initialized")
-	}
-
-	// TODO handle exit conditions from the five previous routines
-
-	return nil
-}
-
-// loadItems performs the initial cache load for the requested item type
-func (st *Plugin) loadItems(key string, rev int64) (int64, error) {
-	st.mu.Lock()
-	defer st.mu.Unlock()
-
-	start := fmt.Sprintf("%s%s", key, ss.Delim)
-	end := fmt.Sprintf("%s%s", key, ss.Delend)
-	for {
-		res, err := st.Get(context.TODO(),
-			&store.GetRequest{Key: start, End: end, Limit: loadPageSize, Revision: rev})
-		if err != nil {
-			return 0, err
-		}
-
-		if rev == 0 {
-			// First read returns the current store revision if requested revision is 0
-			rev = res.Revision
-		} else if res.Revision != rev {
-			// Requested store revision was not honored - something wrong with etcd?
-			return 0, fmt.Errorf("Loaded revision (%d) does not match requested (%d)", res.Revision, rev)
-		}
-
-		if len(res.Kvs) == 0 {
-			break
-		}
-
-		lastKey := ""
-		for _, kv := range res.Kvs {
-			st.cache[kv.Key] = kv
-			lastKey = kv.Key
-		}
-
-		// Get next batch starting one bit greater than the last returned key
-		lastChar := lastKey[len(lastKey)-1] + 1
-		start = fmt.Sprintf("%s%c", lastKey[:len(lastKey)-1], lastChar)
-
-		st.log.Info(fmt.Sprintf("Loaded %d items, last: %s, next: %s, rev: %d", len(res.Kvs), lastKey, start, rev))
-	}
-
-	st.storeRevision = rev
-
-	return rev, nil
-}
-
-// watchChanges receives a stream of updates (deletes or puts)
-// for cached items, beginning with changes in the given store revision.
-// Note: this is called as a goroutine and only returns on an error
-func (st *Plugin) watchChanges(key string, rev int64) error {
-	opts := []clientv3.OpOption{
-		clientv3.WithPrefix(),
-		clientv3.WithProgressNotify(),
-		clientv3.WithRev(rev),
-	}
-
-	wc := st.etcd.Watch(context.TODO(), key, opts...)
-	st.log.Info(fmt.Sprintf("Watching store updates for %s from %d", key, rev))
-
-	for w := range wc {
-		if w.Err() != nil {
-			st.log.Error(fmt.Sprintf("chan error %v", w.Err()))
-			break
-		}
-
-		if w.IsProgressNotify() {
-			st.log.Info(fmt.Sprintf("No store updates for %s in 10 minutes", key))
-			continue
-		}
-
-		// Hold the lock for all updates to give other routines the most recent data.
-		st.mu.Lock()
-
-		for _, e := range w.Events {
-			if e.Type == mvccpb.DELETE {
-				delete(st.cache, string(e.Kv.Key))
-				st.storeRevision = e.Kv.ModRevision
-			} else if e.Type == mvccpb.PUT {
-				st.cache[string(e.Kv.Key)] = &store.KeyValue{
-					Key:            string(e.Kv.Key),
-					Value:          e.Kv.Value,
-					CreateRevision: e.Kv.CreateRevision,
-					ModRevision:    e.Kv.ModRevision,
-					Version:        e.Kv.Version,
-				}
-				st.storeRevision = e.Kv.ModRevision
-			} else {
-				st.log.Error(fmt.Sprintf("Unknown watch event %v", e))
-			}
-		}
-
-		st.mu.Unlock()
-	}
-
-	// TODO restart at last successfully updated store revision
-
-	return nil
-}
-
-// StartHeartbeatService initializes inter- and intra-server heartbeat monitoring.
-// Heartbeats are short-lived records PUT in etcd by servers and responded to by
-// other servers. Heartbeat keys include originator and responder IDs and the value
-// is a timestamp from the originator. In this way, servers can track the latency
-// from database write to async watch update across servers and time.
-// TODO use heartbeat data to modulate write response time to ensure (improve) inter-server cache coherency.
-func (st *Plugin) StartHeartbeatService() error {
-	if st.heartbeatInterval == 0 {
-		st.log.Warn("Heartbeat disabled")
-		return nil
-	}
-
-	// Secure a unique store revision with an empty heartbeat
-	ctx := context.TODO()
-	rev, err := st.sendHB(ctx, "", "", 1)
-	if err != nil {
-		return fmt.Errorf("Error getting heartbeat ID %v", err)
-	}
-
-	st.log.Info(fmt.Sprintf("Starting heartbeat with id %d", rev))
-	go st.heartbeatReply(context.TODO(), rev+1)
-	go st.heartbeatSend(rev + 1)
-
-	// Handle returns from above
-
-	return nil
-}
-
-// Send periodic heartbeat messages
-func (st *Plugin) heartbeatSend(rev int64) {
-	id := fmt.Sprintf("%d", rev)
-	// Loop every interval forever
-	ticker := st.clock.Ticker(st.heartbeatInterval)
-	for t := range ticker.C {
-		st.log.Info(fmt.Sprintf("Sending heartbeat %q at %d", id, t.UnixNano()))
-		fmt.Printf("Sending heartbeat %q at %d\n", id, t.UnixNano())
-		st.sendHB(context.TODO(), id, "", t.UnixNano())
-	}
-}
-
-// Reply to heartbeat messages from other servers.
-func (st *Plugin) heartbeatReply(ctx context.Context, rev int64) {
-	// Watch heartbeat records created after we initialized
-	opts := []clientv3.OpOption{
-		clientv3.WithPrefix(),
-		clientv3.WithProgressNotify(),
-		clientv3.WithRev(rev),
-	}
-	hc := st.etcd.Watch(context.Background(), ss.HeartbeatPrefix, opts...)
-
-	id := fmt.Sprintf("%d", rev)
-	for w := range hc {
-		if w.Err() != nil {
-			st.log.Error(fmt.Sprintf("Heartbeat channel error %v", w.Err()))
-			return
-		}
-
-		if w.IsProgressNotify() {
-			st.log.Error("No heartbeats for 10 minutes")
-		}
-
-		for _, e := range w.Events {
-			if e.Type == 1 {
-				// Ignore delete operations
-				continue
-			}
-			originator, responder, ts := st.parseHB(e)
-			delta := float64(st.clock.Now().UnixNano()-ts) / 1000000.0
-			if originator == id {
-				if responder == "" {
-					st.log.Info(fmt.Sprintf("self heartbeat in %.2fms", delta))
-					fmt.Printf("self heartbeat in %.2fms\n", delta)
-				} else {
-					st.log.Info(fmt.Sprintf("reply heartbeat from %s in %.2fms", responder, delta))
-				}
-			} else if originator != "" && responder == "" {
-				// reply to foreign heartbeat
-				st.log.Debug(fmt.Sprintf("reply to %s", originator))
-				_, err := st.sendHB(ctx, originator, id, ts)
-				if err != nil {
-					st.log.Error(fmt.Sprintf("Error sending heartbeat reply to %s %v", originator, err))
-				}
-			}
-		}
-	}
-}
-
-// Send a heartbeat and return the store revision.
-// Heartbeats are formatted as "H|<originator>|<responder>"
-func (st *Plugin) sendHB(ctx context.Context, orig, resp string, ts int64) (int64, error) {
-	lease, err := st.etcd.Grant(ctx, heartbeatTTL)
-	if err != nil {
-		st.log.Error("Failed to acquire heartbeat lease")
-		return 0, err
-	}
-
-	key := fmt.Sprintf("%s%s%s%s", ss.HeartbeatPrefix, orig, ss.Delim, resp)
-	value := fmt.Sprintf("%d", ts)
-	res, err := st.etcd.Put(ctx, key, value, clientv3.WithLease(lease.ID))
-	if err != nil {
-		return 0, err
-	}
-
-	return res.Header.Revision, nil
-}
-
-// Parse a heartbeat and return the originator and responder ID strings and the timestamp
-func (st *Plugin) parseHB(hb *clientv3.Event) (string, string, int64) {
-	ts, err := strconv.ParseInt(string(hb.Kv.Value), 10, 64)
-	if err != nil {
-		st.log.Error(fmt.Sprintf("Invalid heartbeat payload %q %v", string(hb.Kv.Value), hb))
-		return "", "", 0
-	}
-
-	items := strings.Split(string(hb.Kv.Key), ss.Delim)
-	if len(items) == 2 {
-		return items[1], "", ts
-	}
-
-	if len(items) == 3 {
-		return items[1], items[2], ts
-	}
-
-	st.log.Error(fmt.Sprintf("Invalid heartbeat %q", string(hb.Kv.Key)))
-
-	return "", "", 0
-}
-
 // Get retrieves one or more items by key range.
 func (st *Plugin) Get(ctx context.Context, req *store.GetRequest) (*store.GetResponse, error) {
 	if st.cacheInitialized {
@@ -504,6 +223,7 @@ func (st *Plugin) Get(ctx context.Context, req *store.GetRequest) (*store.GetRes
 					Total:    1,
 				}
 				st.mu.RUnlock()
+				fmt.Printf("Get (cached): %s\n", req.Key)
 				return resp, nil
 			}
 		} else {
@@ -526,6 +246,7 @@ func (st *Plugin) Get(ctx context.Context, req *store.GetRequest) (*store.GetRes
 		return nil, err
 	}
 
+	fmt.Printf("Get: %s %s %d\n", req.Key, req.End, len(res.Kvs))
 	kvs := []*store.KeyValue{}
 	for _, kv := range res.Kvs {
 		kvs = append(kvs, &store.KeyValue{
@@ -580,6 +301,7 @@ func (st *Plugin) Set(ctx context.Context, req *store.SetRequest) (*store.SetRes
 			}
 
 			// Add the operation (Operation_COMPARE has no operation)
+			fmt.Printf("Set: %s %s %s\n", element.Operation, kv.Key, kv.End)
 			if element.Operation == store.Operation_DELETE {
 				opts := []clientv3.OpOption{}
 				if kv.End != "" {
@@ -608,6 +330,7 @@ func (st *Plugin) Set(ctx context.Context, req *store.SetRequest) (*store.SetRes
 		return nil, status.Error(codes.Unknown, fmt.Sprintf("%v %s", err, res))
 	}
 	if !t.Succeeded {
+		fmt.Printf("Set: tx failed\n")
 		return nil, status.Error(codes.Aborted, "store-etcd: missing or incorrect version")
 		// return nil, status.Error(codes.Aborted, fmt.Sprintf("%s %v", res, t.Responses))
 	}
