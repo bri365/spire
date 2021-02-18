@@ -257,7 +257,7 @@ func (s *Shim) listRegistrationEntries(ctx context.Context, revision int64,
 	// to ensure transactional consistency of index read operations.
 	rev := revision
 	if rev == 0 {
-		res, err := s.Store.Get(ctx, &store.GetRequest{Key: entryPrefix, End: AllEntries, Limit: 1})
+		res, err := s.Store.Get(ctx, &store.GetRequest{Key: EntryPrefix, End: AllEntries, Limit: 1})
 		if err != nil {
 			return nil, 0, err
 		}
@@ -359,7 +359,7 @@ func (s *Shim) listRegistrationEntries(ctx context.Context, revision int64,
 	if p != nil {
 		limit = int64(p.PageSize)
 		if len(p.Token) > 0 {
-			if len(p.Token) < 5 || p.Token[0:2] != entryPrefix {
+			if len(p.Token) < 5 || p.Token[0:2] != EntryPrefix {
 				return nil, 0, status.Errorf(codes.InvalidArgument, "could not parse token '%s'", p.Token)
 			}
 			// TODO one bit larger than token
@@ -732,7 +732,7 @@ func (s *Shim) newRegistrationEntryID() (string, error) {
 	// Get the current store revision for use as incremental EntryIds for testing.
 	// TODO remove need for this
 	//
-	res, err := s.Store.Get(context.TODO(), &store.GetRequest{Key: entryPrefix, End: AllEntries, Limit: 1})
+	res, err := s.Store.Get(context.TODO(), &store.GetRequest{Key: EntryPrefix, End: AllEntries, Limit: 1})
 	if err != nil {
 		return "", err
 	}
@@ -747,10 +747,19 @@ func (s *Shim) newRegistrationEntryID() (string, error) {
 	return u.String(), nil
 }
 
+// IsEntryKey returns true if the given key is a properly formatted registration entry key.
+func IsEntryKey(key string) bool {
+	items := strings.Split(key, Delim)
+	if len(items) == 2 && items[0] == EntryKeyID {
+		return true
+	}
+	return false
+}
+
 // entryKey returns a string formatted key for a registered entry
 func entryKey(id string) string {
 	// e.g. "E|5fee2e4a-1fe3-4bf3-b4f0-55eaf268c12a"
-	return fmt.Sprintf("%s%s", entryPrefix, id)
+	return fmt.Sprintf("%s%s", EntryPrefix, id)
 }
 
 // entryIDFromKey returns the registered entry id from the given entry key.

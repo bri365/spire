@@ -1,6 +1,6 @@
 // Package store implements a new datastore layer with the proposed new store interface.
 //
-// Items are stored with a key string and the marshalled protobuf data as the value
+// Items are stored with a key string and marshalled protobuf data as the value
 // Keys are formatted as <item key><delim><unique identifier>
 // e.g. "B|spiffie://example.com" for a bundle
 // or "E|5fee2e4a-1fe3-4bf3-b4f0-55eaf268c12a" for a registration entry
@@ -33,8 +33,8 @@ type Shim struct {
 	Log hclog.Logger
 
 	c     Cache
-	clock clock.Clock
 	cfg   *Configuration
+	clock clock.Clock
 }
 
 // Configuration represents store wide config, supplied by the plugin
@@ -55,16 +55,15 @@ const (
 	Delim = "|"
 
 	// Object identifiers
-	// NOTE: these could be an enum if readability is not important for debugability
-	indexKeyID = "I"
+	IndexKeyID = "I"
 
 	BundleKeyID = "B"
 	EntryKeyID  = "E"
-	heartbeatID = "H"
+	HeartbeatID = "H"
 	NodeKeyID   = "N"
-	selKeyID    = "S"
-	tokenKeyID  = "T"
-	txKeyID     = "X"
+	TokenKeyID  = "T"
+
+	TxKeyID = "X"
 
 	// Index field identifiers
 	ADT = "ADT" // AttestationDataType
@@ -79,8 +78,6 @@ const (
 
 // Key creation values
 var (
-	storeLoaded = false
-
 	// NOTE: this is one bit greater than the delimiter - it is used to end
 	// a range to get all key values for a given prefix.
 	Delend = string(Delim[0] + 1)
@@ -89,22 +86,21 @@ var (
 
 	// Key creation and comparison values
 	BundlePrefix    = fmt.Sprintf("%s%s", BundleKeyID, Delim)
-	entryPrefix     = fmt.Sprintf("%s%s", EntryKeyID, Delim)
-	HeartbeatPrefix = fmt.Sprintf("%s%s", heartbeatID, Delim)
+	EntryPrefix     = fmt.Sprintf("%s%s", EntryKeyID, Delim)
+	HeartbeatPrefix = fmt.Sprintf("%s%s", HeartbeatID, Delim)
 	NodePrefix      = fmt.Sprintf("%s%s", NodeKeyID, Delim)
-	tokenPrefix     = fmt.Sprintf("%s%s", tokenKeyID, Delim)
-	TxPrefix        = fmt.Sprintf("%s%s", txKeyID, Delim)
+	TokenPrefix     = fmt.Sprintf("%s%s", TokenKeyID, Delim)
+	TxPrefix        = fmt.Sprintf("%s%s", TxKeyID, Delim)
 
-	AllBundles   = fmt.Sprintf("%s%s", BundleKeyID, Delend)
-	AllEntries   = fmt.Sprintf("%s%s", EntryKeyID, Delend)
-	AllNodes     = fmt.Sprintf("%s%s", NodeKeyID, Delend)
-	allSelectors = fmt.Sprintf("%s%s", selKeyID, Delend)
-	allTokens    = fmt.Sprintf("%s%s", tokenKeyID, Delend)
+	AllBundles = fmt.Sprintf("%s%s", BundleKeyID, Delend)
+	AllEntries = fmt.Sprintf("%s%s", EntryKeyID, Delend)
+	AllNodes   = fmt.Sprintf("%s%s", NodeKeyID, Delend)
+	AllTokens  = fmt.Sprintf("%s%s", TokenKeyID, Delend)
 
-	bundleIndex = fmt.Sprintf("%s%s%s", BundleKeyID, indexKeyID, Delim)
-	entryIndex  = fmt.Sprintf("%s%s%s", EntryKeyID, indexKeyID, Delim)
-	nodeIndex   = fmt.Sprintf("%s%s%s", NodeKeyID, indexKeyID, Delim)
-	tokenIndex  = fmt.Sprintf("%s%s%s", tokenKeyID, indexKeyID, Delim)
+	bundleIndex = fmt.Sprintf("%s%s%s", BundleKeyID, IndexKeyID, Delim)
+	entryIndex  = fmt.Sprintf("%s%s%s", EntryKeyID, IndexKeyID, Delim)
+	nodeIndex   = fmt.Sprintf("%s%s%s", NodeKeyID, IndexKeyID, Delim)
+	tokenIndex  = fmt.Sprintf("%s%s%s", TokenKeyID, IndexKeyID, Delim)
 
 	nodeExpPrefix = fmt.Sprintf("%s%s%s", nodeIndex, EXP, Delim)
 	nodeExpAll    = fmt.Sprintf("%s%s%s", nodeIndex, EXP, Delend)
@@ -113,9 +109,15 @@ var (
 // New returns an initialized store.
 func New(ds datastore.DataStore, st store.Store, logger hclog.Logger,
 	cfg *Configuration, etcd *clientv3.Client) (*Shim, error) {
-	store := &Shim{DataStore: ds, Store: st, Log: logger, cfg: cfg, clock: clock.New()}
-	store.c = NewCache(cfg)
-	store.Etcd = etcd
+	store := &Shim{
+		DataStore: ds,
+		Store:     st,
+		Etcd:      etcd,
+		Log:       logger,
+		c:         NewCache(cfg),
+		cfg:       cfg,
+		clock:     clock.New(),
+	}
 	if err := store.Initialize(); err != nil {
 		return nil, err
 	}

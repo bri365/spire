@@ -666,6 +666,15 @@ func (s *Shim) SetNodeSelectors(ctx context.Context,
 	return &datastore.SetNodeSelectorsResponse{}, nil
 }
 
+// IsNodeKey returns true if the given key is a properly formatted attested node key.
+func IsNodeKey(key string) bool {
+	items := strings.Split(key, Delim)
+	if len(items) == 2 && items[0] == NodeKeyID {
+		return true
+	}
+	return false
+}
+
 // nodeKey returns a string formatted key for an attested node.
 // e.g. "N|spiffie://example.com/clusterA/nodeN"
 func nodeKey(id string) string {

@@ -488,6 +488,15 @@ func (s *Shim) updateBundle(ctx context.Context,
 	return &datastore.UpdateBundleResponse{Bundle: req.Bundle}, nil
 }
 
+// IsBundleKey returns true if the given key is a properly formatted bundle key.
+func IsBundleKey(key string) bool {
+	items := strings.Split(key, Delim)
+	if len(items) == 2 && items[0] == BundleKeyID {
+		return true
+	}
+	return false
+}
+
 // bundleKey returns a string formatted key for a bundle
 func bundleKey(id string) string {
 	// e.g. "B|spiffie://example.com"

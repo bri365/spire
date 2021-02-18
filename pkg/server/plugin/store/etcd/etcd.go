@@ -336,10 +336,10 @@ func (st *Plugin) Set(ctx context.Context, req *store.SetRequest) (*store.SetRes
 		}
 	}
 
-	// Write delay for cluster sync time
-	// Most, if not all, items should tolerate eventual consistency
-	// Watch update latency is monitored through periodic heartbeats
-	// and the delay value can be adjusted if stricter consistency is desired
+	// Configurable write response delay to allow cluster nodes to sync changes
+	// Most, if not all, items should tolerate eventual consistency (typically 10's of milliseconds)
+	// Update latency is monitored through periodic heartbeats and the delay
+	// value can be adjusted if stricter consistency is desired
 	if writeResponseDelay > 0 {
 		time.Sleep(time.Duration(writeResponseDelay) * time.Millisecond)
 	}

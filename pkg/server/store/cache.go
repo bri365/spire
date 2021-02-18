@@ -3,8 +3,7 @@ package store
 import (
 	"context"
 	"fmt"
-	"strconv"
-	"strings"
+	"sort"
 	"sync"
 	"time"
 
@@ -13,9 +12,10 @@ import (
 	"github.com/roguesoftware/etcd/mvcc/mvccpb"
 	"github.com/spiffe/spire/pkg/server/plugin/datastore"
 	"github.com/spiffe/spire/proto/spire/common"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
-// Cache represents the in-memory cache for Store objects.
 // The cache is implemented as separate sections for each object type.
 // As reads are expected to significantly outweight writes, cache segments are
 // protected with a RWMutex - allowing multiple parallel read operations.
@@ -44,23 +44,35 @@ import (
 //     return append(ss[:i], ss[i+1:]...)
 // }
 //
+
+// cacheIndex consists of an ordered list and count of cached keys (object IDs).
+type cacheIndex struct {
+	Count int
+	Keys  []string
+}
+
+// Cache represents the in-memory cache for Store objects.
 type Cache struct {
 	// Interval in seconds between server heartbeat messages
 	heartbeatInterval time.Duration
-	initialized       bool
 	mu                sync.RWMutex
+	initialized       bool
 	storeRevision     int64
 
 	bundleCacheEnabled bool
+	bundleIndex        *cacheIndex
 	bundles            map[string]*common.Bundle
 
 	entryCacheEnabled bool
+	entryIndex        *cacheIndex
 	entries           map[string]*common.RegistrationEntry
 
 	nodeCacheEnabled bool
+	nodeIndex        *cacheIndex
 	nodes            map[string]*common.AttestedNode
 
 	tokenCacheEnabled bool
+	tokenIndex        *cacheIndex
 	tokens            map[string]*datastore.JoinToken
 }
 
@@ -83,6 +95,11 @@ func NewCache(cfg *Configuration) Cache {
 		nodes:   map[string]*common.AttestedNode{},
 		tokens:  map[string]*datastore.JoinToken{},
 
+		bundleIndex: &cacheIndex{Keys: []string{}},
+		entryIndex:  &cacheIndex{Keys: []string{}},
+		nodeIndex:   &cacheIndex{Keys: []string{}},
+		tokenIndex:  &cacheIndex{Keys: []string{}},
+
 		bundleCacheEnabled: !cfg.DisableBundleCache,
 		entryCacheEnabled:  !cfg.DisableEntryCache,
 		nodeCacheEnabled:   !cfg.DisableNodeCache,
@@ -99,12 +116,15 @@ func NewCache(cfg *Configuration) Cache {
 // NOTE: for faster startup, we could start a go routine to load
 // and validate the cache data.
 func (s *Shim) Initialize() error {
-	// Start with the latest store revision (rev = 0)
-	var rev int64
-	var err error
+	// rev is a unique store revision and serves as both the heartbeat ID for this server
+	// as well as the initial cache revision
+	rev, err := s.startHeartbeatService()
+	if err != nil {
+		return err
+	}
 
 	if s.c.bundleCacheEnabled {
-		rev, err = s.loadBundles(rev)
+		err = s.loadBundles(rev)
 		if err != nil {
 			return err
 		}
@@ -112,7 +132,7 @@ func (s *Shim) Initialize() error {
 	}
 
 	if s.c.entryCacheEnabled {
-		rev, err = s.loadEntries(rev)
+		err = s.loadEntries(rev)
 		if err != nil {
 			return err
 		}
@@ -120,7 +140,7 @@ func (s *Shim) Initialize() error {
 	}
 
 	if s.c.nodeCacheEnabled {
-		_, err = s.loadNodes(rev)
+		err = s.loadNodes(rev)
 		if err != nil {
 			return err
 		}
@@ -128,59 +148,55 @@ func (s *Shim) Initialize() error {
 	}
 
 	if s.c.tokenCacheEnabled {
-		_, err = s.loadTokens(rev)
+		err = s.loadTokens(rev)
 		if err != nil {
 			return err
 		}
 		go s.watchTokens(rev + 1)
 	}
 
+	s.c.mu.Lock()
 	s.c.initialized = true
-	s.startHeartbeatService()
+	s.c.storeRevision = rev
+	s.c.mu.Unlock()
 
-	// TODO handle exit conditions from the five previous routines
+	// TODO handle exit conditions from the watch routines?
 
 	return nil
 }
 
 // loadBundles performs the initial cache load for bundles
-func (s *Shim) loadBundles(revision int64) (int64, error) {
+func (s *Shim) loadBundles(rev int64) error {
+	// Cache is being initialized so it is safe to hold the lock the whole time
 	s.c.mu.Lock()
 	defer s.c.mu.Unlock()
 
-	rev := revision
 	token := ""
 	for {
 		br, r, err := s.listBundles(context.TODO(), rev, &datastore.ListBundlesRequest{
 			Pagination: &datastore.Pagination{Token: token, PageSize: loadPageSize}})
 		if err != nil {
-			return 0, err
+			return err
 		}
 
-		if rev == 0 {
-			// First read returns the current store revision if requested revision is 0
-			rev = r
-		} else if r != rev {
-			// Requested store revision was not honored - something wrong with etcd?
-			return 0, fmt.Errorf("LB revision returned (%d) does not match requested (%d)", r, rev)
-		}
-
-		count := len(br.Bundles)
-		token = br.Pagination.Token
-		s.Log.Debug(fmt.Sprintf("load bundles count: %d, token: %s, rev: %d", count, token, rev))
-
-		if count == 0 {
-			break
+		if r != rev {
+			return fmt.Errorf("LB revision returned (%d) does not match requested (%d)", r, rev)
 		}
 
 		for _, b := range br.Bundles {
 			s.c.bundles[b.TrustDomainId] = b
 		}
+
+		count := len(br.Bundles)
+		token = br.Pagination.Token
+		s.Log.Debug("Cache LB", "count", count, "token", token)
+
+		if count < loadPageSize {
+			break
+		}
 	}
 
-	s.c.storeRevision = rev
-
-	return rev, nil
+	return nil
 }
 
 // Add or update the given bundle in the cache
@@ -212,43 +228,37 @@ func (s *Shim) removeBundleCacheEntry(id string) {
 }
 
 // loadEntries performs the initial cache load for registration entries
-func (s *Shim) loadEntries(revision int64) (int64, error) {
+func (s *Shim) loadEntries(rev int64) error {
+	// Cache is being initialized so it is safe to hold the lock the whole time
 	s.c.mu.Lock()
 	defer s.c.mu.Unlock()
 
-	rev := revision
 	token := ""
 	for {
 		er, r, err := s.listRegistrationEntries(context.TODO(), rev, &datastore.ListRegistrationEntriesRequest{
 			Pagination: &datastore.Pagination{Token: token, PageSize: loadPageSize}})
 		if err != nil {
-			return 0, err
+			return err
 		}
 
-		if rev == 0 {
-			// First read returns the current store revision if requested revision is 0
-			rev = r
-		} else if r != rev {
-			// Requested store version was not honored - something wrong with etcd?
-			return 0, fmt.Errorf("LE revision returned (%d) does not match requested (%d)", r, rev)
-		}
-
-		count := len(er.Entries)
-		token = er.Pagination.Token
-		s.Log.Debug(fmt.Sprintf("load entries count: %d, token: %s, rev: %d", count, token, rev))
-
-		if count == 0 {
-			break
+		if r != rev {
+			return fmt.Errorf("Cache LE revision returned (%d) does not match requested (%d)", r, rev)
 		}
 
 		for _, e := range er.Entries {
 			s.c.entries[e.EntryId] = e
 		}
+
+		count := len(er.Entries)
+		token = er.Pagination.Token
+		s.Log.Debug("Cache LE", "count", count, "token", token)
+
+		if count < loadPageSize {
+			break
+		}
 	}
 
-	s.c.storeRevision = rev
-
-	return rev, nil
+	return nil
 }
 
 // Add or update the given attested entry in the cache
@@ -280,43 +290,37 @@ func (s *Shim) removeEntryCacheEntry(id string) {
 }
 
 // loadNodes performs the initial cache load for attested nodes.
-func (s *Shim) loadNodes(revision int64) (int64, error) {
+func (s *Shim) loadNodes(rev int64) error {
+	// Cache is being initialized so it is safe to hold the lock the whole time
 	s.c.mu.Lock()
 	defer s.c.mu.Unlock()
 
-	rev := revision
 	token := ""
 	for {
 		nr, r, err := s.listAttestedNodes(context.TODO(), rev, &datastore.ListAttestedNodesRequest{
 			Pagination: &datastore.Pagination{Token: token, PageSize: loadPageSize}})
 		if err != nil {
-			return 0, err
+			return err
 		}
 
-		if rev == 0 {
-			// First read returns the current store revision if requested revision is 0
-			rev = r
-		} else if r != rev {
-			// Requested store version was not honored - something wrong with etcd?
-			return 0, fmt.Errorf("LN revision returned (%d) does not match requested (%d)", r, rev)
-		}
-
-		count := len(nr.Nodes)
-		token = nr.Pagination.Token
-		s.Log.Debug(fmt.Sprintf("load nodes count: %d, token: %s, rev: %d", count, token, rev))
-
-		if count == 0 {
-			break
+		if r != rev {
+			return fmt.Errorf("LN revision returned (%d) does not match requested (%d)", r, rev)
 		}
 
 		for _, n := range nr.Nodes {
 			s.c.nodes[n.SpiffeId] = n
 		}
+
+		count := len(nr.Nodes)
+		token = nr.Pagination.Token
+		s.Log.Debug("Cache LN", "count", count, "token", token)
+
+		if count < loadPageSize {
+			break
+		}
 	}
 
-	s.c.storeRevision = rev
-
-	return rev, nil
+	return nil
 }
 
 // Add or update the given attested node in the cache
@@ -348,43 +352,37 @@ func (s *Shim) removeNodeCacheEntry(id string) {
 }
 
 // loadTokens performs the initial cache load for join tokens.
-func (s *Shim) loadTokens(revision int64) (int64, error) {
+func (s *Shim) loadTokens(rev int64) error {
+	// Cache is being initialized so it is safe to hold the lock the whole time
 	s.c.mu.Lock()
 	defer s.c.mu.Unlock()
 
-	rev := revision
 	token := ""
 	for {
 		tr, r, err := s.listJoinTokens(context.TODO(), rev, &datastore.ListJoinTokensRequest{
 			Pagination: &datastore.Pagination{Token: token, PageSize: loadPageSize}})
 		if err != nil {
-			return 0, err
+			return err
 		}
 
-		if rev == 0 {
-			// First read returns the current store revision if requested revision is 0
-			rev = r
-		} else if r != rev {
-			// Requested store version was not honored - something wrong with etcd?
-			return 0, fmt.Errorf("LT revision returned (%d) does not match requested (%d)", r, rev)
-		}
-
-		count := len(tr.JoinTokens)
-		token = tr.Pagination.Token
-		s.Log.Debug(fmt.Sprintf("load tokens count: %d, token: %s, rev: %d", count, token, rev))
-
-		if count == 0 {
-			break
+		if r != rev {
+			return fmt.Errorf("LT revision returned (%d) does not match requested (%d)", r, rev)
 		}
 
 		for _, t := range tr.JoinTokens {
 			s.c.tokens[t.Token] = t
 		}
+
+		count := len(tr.JoinTokens)
+		token = tr.Pagination.Token
+		s.Log.Debug("Cache LT", "count", count, "token", token)
+
+		if count < loadPageSize {
+			break
+		}
 	}
 
-	s.c.storeRevision = rev
-
-	return rev, nil
+	return nil
 }
 
 // Add or update the given join token in the cache
@@ -415,22 +413,24 @@ func (s *Shim) removeTokenCacheEntry(id string) {
 	}
 }
 
-// watchBundlesAndRegistrations receives a stream of updates (deletes or puts)
-// for bundles, starting at the given store revision.
-// Note: this is called as a goroutine and only returns on an error
+// watchBundles receives a stream of updates (deletes or puts) for bundles,
+// starting at the given store revision, and applies the changes to cache.
 func (s *Shim) watchBundles(rev int64) error {
 	opts := []clientv3.OpOption{
 		clientv3.WithPrefix(),
 		clientv3.WithProgressNotify(),
 		clientv3.WithRev(rev),
 	}
-	// Using BundleKeyID instead of BundlePrefix will also return index updates
-	bChan := s.Etcd.Watch(context.TODO(), BundlePrefix, opts...)
-	s.Log.Debug(fmt.Sprintf("Watching bundle updates from %d", rev))
 
-	for w := range bChan {
+	// Using BundleKeyID instead of BundlePrefix will also return index updates
+	bc := s.Etcd.Watch(context.TODO(), BundlePrefix, opts...)
+	s.Log.Debug("Watching bundle updates", "rev", rev)
+
+	for w := range bc {
 		if w.Err() != nil {
-			s.Log.Error(fmt.Sprintf("bChan error %v", w.Err()))
+			if status.Convert(w.Err()).Code() != codes.Canceled {
+				s.Log.Error("Bundle watch channel error", "error", w.Err())
+			}
 			break
 		}
 
@@ -441,31 +441,30 @@ func (s *Shim) watchBundles(rev int64) error {
 
 		// Hold the lock for all updates to give other routines the most recent data.
 		s.c.mu.Lock()
-
 		for _, e := range w.Events {
 			if e.Type == mvccpb.DELETE {
 				id, err := bundleIDFromKey(string(e.Kv.Key))
 				if err != nil {
-					s.Log.Error(fmt.Sprintf("%s", err))
+					s.Log.Error("BWD error", err)
 				} else {
 					delete(s.c.bundles, id)
+					s.removeIndexKey(s.c.bundleIndex, id)
 					s.c.storeRevision = e.Kv.ModRevision
 				}
 			} else if e.Type == mvccpb.PUT {
 				bundle := &common.Bundle{}
 				err := proto.Unmarshal(e.Kv.Value, bundle)
 				if err != nil {
-					s.Log.Error(fmt.Sprintf("%v on %v", err, e.Kv.Value))
+					s.Log.Error("BWP error", err, "value", e.Kv.Value)
+				} else {
+					s.c.bundles[bundle.TrustDomainId] = bundle
+					s.insertIndexKey(s.c.bundleIndex, bundle.TrustDomainId)
+					s.c.storeRevision = e.Kv.ModRevision
 				}
-
-				s.c.bundles[bundle.TrustDomainId] = bundle
-				s.c.storeRevision = e.Kv.ModRevision
 			} else {
-				s.Log.Error(fmt.Sprintf("Unknown watch event %v", e))
+				s.Log.Error("BW unknown event", "type", e.Type, "kv", e.Kv)
 			}
-
 		}
-
 		s.c.mu.Unlock()
 	}
 
@@ -474,22 +473,24 @@ func (s *Shim) watchBundles(rev int64) error {
 	return nil
 }
 
-// watchEntries receives a stream of updates (deletes or puts)
-// for registration entries, starting at the given store revision.
-// Note: this is called as a goroutine and only returns on an error
+// watchEntries receives a stream of updates (deletes or puts) for registration entries,
+// starting at the given store revision, and applies the changes to cache.
 func (s *Shim) watchEntries(rev int64) error {
 	opts := []clientv3.OpOption{
 		clientv3.WithPrefix(),
 		clientv3.WithProgressNotify(),
 		clientv3.WithRev(rev),
 	}
-	// Using EntryKeyID instead of entryPrefix will also return index updates
-	eChan := s.Etcd.Watch(context.TODO(), entryPrefix, opts...)
-	s.Log.Debug(fmt.Sprintf("Watching entry updates from %d", rev))
 
-	for w := range eChan {
+	// Using EntryKeyID instead of EntryPrefix will also return index updates
+	ec := s.Etcd.Watch(context.TODO(), EntryPrefix, opts...)
+	s.Log.Debug("Watching entry updates", "rev", rev)
+
+	for w := range ec {
 		if w.Err() != nil {
-			s.Log.Error(fmt.Sprintf("eChan error %v", w.Err()))
+			if status.Convert(w.Err()).Code() != codes.Canceled {
+				s.Log.Error("Entry watch channel error", "error", w.Err())
+			}
 			break
 		}
 
@@ -500,14 +501,14 @@ func (s *Shim) watchEntries(rev int64) error {
 
 		// Hold the lock for all updates to give other routines the most recent data.
 		s.c.mu.Lock()
-
 		for _, e := range w.Events {
 			if e.Type == mvccpb.DELETE {
 				id, err := entryIDFromKey(string(e.Kv.Key))
 				if err != nil {
-					s.Log.Error(fmt.Sprintf("%s", err))
+					s.Log.Error("EWD error", err)
 				} else {
 					delete(s.c.entries, id)
+					s.removeIndexKey(s.c.entryIndex, id)
 					s.c.storeRevision = e.Kv.ModRevision
 				}
 			} else if e.Type == mvccpb.PUT {
@@ -515,15 +516,15 @@ func (s *Shim) watchEntries(rev int64) error {
 				err := proto.Unmarshal(e.Kv.Value, entry)
 				if err != nil {
 					s.Log.Error(fmt.Sprintf("%v on %v", err, e.Kv.Value))
+				} else {
+					s.c.entries[entry.EntryId] = entry
+					s.insertIndexKey(s.c.entryIndex, entry.EntryId)
+					s.c.storeRevision = e.Kv.ModRevision
 				}
-
-				s.c.entries[entry.EntryId] = entry
-				s.c.storeRevision = e.Kv.ModRevision
 			} else {
-				s.Log.Error(fmt.Sprintf("Unknown watch event %v", e))
+				s.Log.Error("EW unknown event", "type", e.Type, "kv", e.Kv)
 			}
 		}
-
 		s.c.mu.Unlock()
 	}
 
@@ -532,22 +533,24 @@ func (s *Shim) watchEntries(rev int64) error {
 	return nil
 }
 
-// watchNodes receives a stream of updates (deletes or puts)
-// for attested nodes, starting at the given store revision.
-// Note: this is called as a goroutine and only returns on an error
+// watchNodes receives a stream of updates (deletes or puts) for attested nodes,
+// starting at the given store revision, and applies the changes to cache.
 func (s *Shim) watchNodes(rev int64) error {
 	opts := []clientv3.OpOption{
 		clientv3.WithPrefix(),
 		clientv3.WithProgressNotify(),
 		clientv3.WithRev(rev),
 	}
-	// Using NodeKeyID instead of NodePrefix will also return index updates
-	nChan := s.Etcd.Watch(context.TODO(), NodePrefix, opts...)
-	s.Log.Debug(fmt.Sprintf("Watching node updates from %d", rev))
 
-	for w := range nChan {
+	// Using NodeKeyID instead of NodePrefix will also return index updates
+	nc := s.Etcd.Watch(context.TODO(), NodePrefix, opts...)
+	s.Log.Debug("Watching node updates", "rev", rev)
+
+	for w := range nc {
 		if w.Err() != nil {
-			s.Log.Error(fmt.Sprintf("nChan error %v", w.Err()))
+			if status.Convert(w.Err()).Code() != codes.Canceled {
+				s.Log.Error("Node watch channel error", "error", w.Err())
+			}
 			break
 		}
 
@@ -558,30 +561,30 @@ func (s *Shim) watchNodes(rev int64) error {
 
 		// Hold the lock for all updates to give other routines the most recent data.
 		s.c.mu.Lock()
-
 		for _, e := range w.Events {
 			if e.Type == mvccpb.DELETE {
 				id, err := nodeIDFromKey(string(e.Kv.Key))
 				if err != nil {
-					s.Log.Error(fmt.Sprintf("%s", err))
+					s.Log.Error("NWD error", err)
 				} else {
 					delete(s.c.nodes, id)
+					s.removeIndexKey(s.c.nodeIndex, id)
 					s.c.storeRevision = e.Kv.ModRevision
 				}
 			} else if e.Type == mvccpb.PUT {
 				node := &common.AttestedNode{}
 				err := proto.Unmarshal(e.Kv.Value, node)
 				if err != nil {
-					s.Log.Error(fmt.Sprintf("%v on %v", err, e.Kv.Value))
+					s.Log.Error("NWP error", err, "value", e.Kv.Value)
+				} else {
+					s.c.nodes[node.SpiffeId] = node
+					s.insertIndexKey(s.c.nodeIndex, node.SpiffeId)
+					s.c.storeRevision = e.Kv.ModRevision
 				}
-
-				s.c.nodes[node.SpiffeId] = node
-				s.c.storeRevision = e.Kv.ModRevision
 			} else {
-				s.Log.Error(fmt.Sprintf("Unknown watch event %v", e))
+				s.Log.Error("NW unknown event", "type", e.Type, "kv", e.Kv)
 			}
 		}
-
 		s.c.mu.Unlock()
 	}
 
@@ -590,22 +593,24 @@ func (s *Shim) watchNodes(rev int64) error {
 	return nil
 }
 
-// watchTokens receives a stream of updates (deletes or puts)
-// for join tokens, starting at the given store revision.
-// Note: this is called as a goroutine and only returns on an error
+// watchTokens receives a stream of updates (deletes or puts) for join tokens,
+// starting at the given store revision, and applies the changes to cache.
 func (s *Shim) watchTokens(rev int64) error {
 	opts := []clientv3.OpOption{
 		clientv3.WithPrefix(),
 		clientv3.WithProgressNotify(),
 		clientv3.WithRev(rev),
 	}
-	// Using tokenKeyID instead of tokenPrefix will also return index updates
-	tChan := s.Etcd.Watch(context.TODO(), tokenPrefix, opts...)
-	s.Log.Debug(fmt.Sprintf("Watching token updates from %d", rev))
 
-	for w := range tChan {
+	// Using TokenKeyID instead of TokenPrefix will also return index updates
+	tc := s.Etcd.Watch(context.TODO(), TokenPrefix, opts...)
+	s.Log.Debug("Watching token updates", "rev", rev)
+
+	for w := range tc {
 		if w.Err() != nil {
-			s.Log.Error(fmt.Sprintf("tChan error %v", w.Err()))
+			if status.Convert(w.Err()).Code() != codes.Canceled {
+				s.Log.Error("Token watch channel error", "error", w.Err())
+			}
 			break
 		}
 
@@ -616,30 +621,30 @@ func (s *Shim) watchTokens(rev int64) error {
 
 		// Hold the lock for all updates to give other routines the most recent data.
 		s.c.mu.Lock()
-
 		for _, e := range w.Events {
 			if e.Type == mvccpb.DELETE {
 				id, err := tokenIDFromKey(string(e.Kv.Key))
 				if err != nil {
-					s.Log.Error(fmt.Sprintf("%s", err))
+					s.Log.Error("TWD error", err)
 				} else {
 					delete(s.c.tokens, id)
+					s.removeIndexKey(s.c.tokenIndex, id)
 					s.c.storeRevision = e.Kv.ModRevision
 				}
 			} else if e.Type == mvccpb.PUT {
 				token := &datastore.JoinToken{}
 				err := proto.Unmarshal(e.Kv.Value, token)
 				if err != nil {
-					s.Log.Error(fmt.Sprintf("%v on %v", err, e.Kv.Value))
+					s.Log.Error("TWP error", err, "value", e.Kv.Value)
+				} else {
+					s.c.tokens[token.Token] = token
+					s.insertIndexKey(s.c.tokenIndex, token.Token)
+					s.c.storeRevision = e.Kv.ModRevision
 				}
-
-				s.c.tokens[token.Token] = token
-				s.c.storeRevision = e.Kv.ModRevision
 			} else {
 				s.Log.Error(fmt.Sprintf("Unknown watch event %v", e))
 			}
 		}
-
 		s.c.mu.Unlock()
 	}
 
@@ -648,126 +653,62 @@ func (s *Shim) watchTokens(rev int64) error {
 	return nil
 }
 
-// startHeartbeatService initializes inter- and intra-server heartbeat monitoring.
-// Heartbeats are short-lived records in the store PUT by servers and
-// responded to by all other servers.
-// Heartbeat keys include originator and responder IDs and the value is
-// a timestamp from the originator. In this way, servers can track the
-// latency from database write to async watch update across servers and time.
-// TODO use heartbeat data to modulate write response time to ensure (improve)
-// inter-server cache coherency.
-func (s *Shim) startHeartbeatService() {
-	// Secure a unique store revision with an empty heartbeat
-	ctx := context.TODO()
-	rev, err := s.sendHB(ctx, "", "", 1)
-	if err != nil {
-		s.Log.Error(fmt.Sprintf("Error getting heartbeat ID %v", err))
+// insertIndexKey inserts the given key into the given index if it does not already exist.
+// This function must be called with s.c.mu.Lock() already held.
+func (s *Shim) insertIndexKey(ci *cacheIndex, key string) {
+	i := sort.SearchStrings(ci.Keys, key)
+	if i < len(ci.Keys) && ci.Keys[i] == key {
+		// Already exists
 		return
 	}
+	ci.Keys = append(ci.Keys, "")
+	copy(ci.Keys[i+1:], ci.Keys[i:])
+	ci.Keys[i] = key
+	ci.Count = len(ci.Keys)
+	return
+}
 
-	if s.c.heartbeatInterval == 0 {
-		// s.Log.Warn("Heartbeat disabled")
+// removeIndexKey deletes the given key from the given index if it exists.
+// This function must be called with s.c.mu.Lock() already held.
+func (s *Shim) removeIndexKey(ci *cacheIndex, key string) {
+	i := sort.SearchStrings(ci.Keys, key)
+	if i < len(ci.Keys) && ci.Keys[i] == key {
+		ci.Keys = append(ci.Keys[:i], ci.Keys[i+1:]...)
+		ci.Count = len(ci.Keys)
 		return
 	}
-
-	s.Log.Debug(fmt.Sprintf("Starting heartbeat with id %d", rev))
-	go s.hbReply(context.TODO(), rev+1)
-	go s.hbSend(rev + 1)
+	// Not found
+	return
 }
 
-// Send periodic heartbeat messages
-func (s *Shim) hbSend(rev int64) {
-	id := fmt.Sprintf("%d", rev)
-	// Loop every interval forever
-	ticker := s.clock.Ticker(s.c.heartbeatInterval)
-	for t := range ticker.C {
-		s.Log.Debug(fmt.Sprintf("Sending heartbeat %q at %d", id, t.UnixNano()))
-		s.sendHB(context.TODO(), id, "", t.UnixNano())
-	}
-}
-
-// Reply to heartbeat messages from other servers.
-func (s *Shim) hbReply(ctx context.Context, rev int64) {
-	// Watch heartbeat records created after we initialized
-	opts := []clientv3.OpOption{
-		clientv3.WithPrefix(),
-		clientv3.WithProgressNotify(),
-		clientv3.WithRev(rev),
-	}
-	hChan := s.Etcd.Watch(context.Background(), HeartbeatPrefix, opts...)
-
-	id := fmt.Sprintf("%d", rev)
-	for w := range hChan {
-		if w.Err() != nil {
-			s.Log.Error(fmt.Sprintf("Heartbeat channel error %v", w.Err()))
-			return
-		}
-
-		if w.IsProgressNotify() {
-			s.Log.Error("No heartbeats for 10 minutes")
-		}
-
-		for _, e := range w.Events {
-			if e.Type == 1 {
-				// Ignore delete operations
-				continue
-			}
-			originator, responder, ts := s.parseHB(e)
-			delta := float64(s.clock.Now().UnixNano()-ts) / 1000000.0
-			if originator == id {
-				if responder == "" {
-					s.Log.Info(fmt.Sprintf("self heartbeat in %.2fms", delta))
-				} else {
-					s.Log.Info(fmt.Sprintf("reply heartbeat from %s in %.2fms", responder, delta))
-				}
-			} else if originator != "" && responder == "" {
-				// reply to foreign heartbeat
-				s.Log.Debug(fmt.Sprintf("reply to %s", originator))
-				_, err := s.sendHB(ctx, originator, id, ts)
-				if err != nil {
-					s.Log.Error(fmt.Sprintf("Error sending heartbeat reply to %s %v", originator, err))
-				}
-			}
-		}
-	}
-}
-
-// Send a heartbeat and return the store revision.
-// Heartbeats are formatted as "H|<originator>|<responder>"
-func (s *Shim) sendHB(ctx context.Context, orig, resp string, ts int64) (int64, error) {
-	lease, err := s.Etcd.Grant(ctx, hbTTL)
-	if err != nil {
-		s.Log.Error("Failed to acquire heartbeat lease")
-		return 0, err
+// findIndexKeyEnd returns a slice of keys from the given cache index bounded by key and end.
+// This function must be called with s.c.mu.RLock() already held.
+func (s *Shim) findIndexKeyEnd(key, end string) []string {
+	var ci *cacheIndex
+	if IsBundleKey(key) {
+		ci = s.c.bundleIndex
+	} else if IsEntryKey(key) {
+		ci = s.c.entryIndex
+	} else if IsNodeKey(key) {
+		ci = s.c.nodeIndex
+	} else {
+		s.Log.Error("Unknown key", "key", key)
+		return []string{}
 	}
 
-	key := fmt.Sprintf("%s%s%s%s", HeartbeatPrefix, orig, Delim, resp)
-	value := fmt.Sprintf("%d", ts)
-	res, err := s.Etcd.Put(ctx, key, value, clientv3.WithLease(lease.ID))
-	if err != nil {
-		return 0, err
+	// Locate the index offsets for the beginning and end of the range
+	start := sort.SearchStrings(ci.Keys, key)
+	finish := sort.SearchStrings(ci.Keys, end)
+
+	if start > finish {
+		s.Log.Error("Invalid range", "key", key, "end", end)
+		return []string{}
 	}
 
-	return res.Header.Revision, nil
-}
-
-// Parse a heartbeat and return the originator and responder ID strings and the timestamp
-func (s *Shim) parseHB(hb *clientv3.Event) (string, string, int64) {
-	ts, err := strconv.ParseInt(string(hb.Kv.Value), 10, 64)
-	if err != nil {
-		s.Log.Error(fmt.Sprintf("Invalid heartbeat payload %q %v", string(hb.Kv.Value), hb))
-		return "", "", 0
-	}
-	items := strings.Split(string(hb.Kv.Key), Delim)
-	if len(items) == 2 {
-		return items[1], "", ts
+	if start == ci.Count {
+		// not found
+		return []string{}
 	}
 
-	if len(items) == 3 {
-		return items[1], items[2], ts
-	}
-
-	s.Log.Error(fmt.Sprintf("Invalid heartbeat %q", string(hb.Kv.Key)))
-
-	return "", "", 0
+	return ci.Keys[start:finish]
 }

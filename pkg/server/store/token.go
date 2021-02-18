@@ -156,7 +156,7 @@ func (s *Shim) listJoinTokens(ctx context.Context, rev int64,
 
 	// Start with all token identifiers and limit of 0 (no limit)
 	key := tokenKey("")
-	end := allTokens
+	end := AllTokens
 	var limit int64
 
 	p := req.Pagination
@@ -228,16 +228,25 @@ func (s *Shim) PruneJoinTokens(ctx context.Context,
 	return &datastore.PruneJoinTokensResponse{}, nil
 }
 
+// IsTokenKey returns true if the given key is a properly formatted attested node key.
+func IsTokenKey(key string) bool {
+	items := strings.Split(key, Delim)
+	if len(items) == 2 && items[0] == TokenKeyID {
+		return true
+	}
+	return false
+}
+
 // tokenKey returns a string formatted key for a join token
 func tokenKey(id string) string {
 	// e.g. "T|5fee2e4a-1fe3"
-	return fmt.Sprintf("%s%s", tokenPrefix, id)
+	return fmt.Sprintf("%s%s", TokenPrefix, id)
 }
 
 // tokenIDFromKey returns the token id from the given token key.
 func tokenIDFromKey(key string) (string, error) {
 	items := strings.Split(key, Delim)
-	if len(items) != 2 || items[0] != tokenKeyID {
+	if len(items) != 2 || items[0] != TokenKeyID {
 		return "", fmt.Errorf("invalid token key: %s", key)
 	}
 	return items[1], nil
