@@ -180,7 +180,7 @@ func (s *Shim) DeleteBundle(ctx context.Context,
 		}
 	}
 
-	// Add to delete list, ensuring bundle version matches read from above
+	// Build delete list, ensuring bundle version matches read from above
 	del := []*store.KeyValue{{
 		Key:     bundleKey(id),
 		Compare: store.Compare_EQUALS,
@@ -197,7 +197,7 @@ func (s *Shim) DeleteBundle(ctx context.Context,
 	if err != nil {
 		st := status.Convert(err)
 		if st.Code() == codes.Aborted {
-			return nil, status.Error(codes.NotFound, "store-etcd: record not found")
+			return nil, status.Error(codes.Aborted, "store-etcd: version changed")
 		}
 		return nil, err
 	}

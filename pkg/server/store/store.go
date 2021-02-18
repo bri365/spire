@@ -9,6 +9,7 @@
 // <item key><I><delim><index field identifier>[...<delim><field value>]<delim><unique item identifier>
 // e.g. "NI|EXP|1611907252|spiffie://example.com/clusterA/nodeN" for an attested node expiry
 //
+// TODO add primary key field number/identifier to item keys?
 package store
 
 import (

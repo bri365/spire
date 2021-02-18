@@ -317,11 +317,11 @@ func (st *Plugin) Set(ctx context.Context, req *store.SetRequest) (*store.SetRes
 		return nil, status.Error(codes.Unknown, fmt.Sprintf("%v %s", err, res))
 	}
 	if !t.Succeeded {
-		return nil, status.Error(codes.Aborted, "store-etcd: missing or incorrect version")
-		// return nil, status.Error(codes.Aborted, fmt.Sprintf("%s %v", res, t.Responses))
+		// return nil, status.Error(codes.Aborted, "store-etcd: missing or incorrect version")
+		return nil, status.Error(codes.Aborted, fmt.Sprintf("%s %v", res, t.Responses))
 	}
 
-	// Send End of Transaction marker for watchers
+	// Send End of Transaction marker for watchers if requested
 	if enableEotMarkers {
 		eot := fmt.Sprintf("%s%d", ss.TxPrefix, t.Header.Revision)
 		lease, err := st.Etcd.Grant(ctx, ss.TxEotTTL)
@@ -340,6 +340,13 @@ func (st *Plugin) Set(ctx context.Context, req *store.SetRequest) (*store.SetRes
 	// Most, if not all, items should tolerate eventual consistency (typically 10's of milliseconds)
 	// Update latency is monitored through periodic heartbeats and the delay
 	// value can be adjusted if stricter consistency is desired
+
+	// TODO/NOTE can certain writes be subjected to two phase commit in cases where we want servers to
+	// acknowledge changes have been updated in cache. For example, in an agent (node) SVID rotation
+	// attack scenario, an attacker could try to rotate the agent SVID immediately after the authentic
+	// agent, hitting the cache to authenticate, and assuming the identity of the agent with a second newer.
+	// This scenario may also be prevented by having the rotation query the backend store before updating the
+	// SVID regardless of authentication.
 	if writeResponseDelay > 0 {
 		time.Sleep(time.Duration(writeResponseDelay) * time.Millisecond)
 	}

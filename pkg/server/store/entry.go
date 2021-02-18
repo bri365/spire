@@ -115,9 +115,9 @@ func (s *Shim) CreateRegistrationEntry(ctx context.Context,
 	if err != nil {
 		// TODO get most accurate error possible
 		if status.Convert(err).Code() == codes.Aborted {
-			msg := fmt.Sprintf("entry already exists")
+			msg := "entry already exists"
 			if len(cmp) > 0 {
-				msg = fmt.Sprintf("unable to find federated bundle or %s", msg)
+				msg = fmt.Sprintf("%s or unable to find federated bundle", msg)
 			}
 			return nil, status.Error(codes.Aborted, msg)
 		}

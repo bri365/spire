@@ -185,6 +185,7 @@ func (s *Shim) loadBundles(rev int64) error {
 
 		for _, b := range br.Bundles {
 			s.c.bundles[b.TrustDomainId] = b
+			s.c.bundleIndex.Keys = append(s.c.bundleIndex.Keys, b.TrustDomainId)
 		}
 
 		count := len(br.Bundles)
@@ -195,6 +196,9 @@ func (s *Shim) loadBundles(rev int64) error {
 			break
 		}
 	}
+
+	sort.Strings(s.c.bundleIndex.Keys)
+	s.c.bundleIndex.Count = len(s.c.bundleIndex.Keys)
 
 	return nil
 }
@@ -247,6 +251,7 @@ func (s *Shim) loadEntries(rev int64) error {
 
 		for _, e := range er.Entries {
 			s.c.entries[e.EntryId] = e
+			s.c.entryIndex.Keys = append(s.c.entryIndex.Keys, e.EntryId)
 		}
 
 		count := len(er.Entries)
@@ -257,6 +262,9 @@ func (s *Shim) loadEntries(rev int64) error {
 			break
 		}
 	}
+
+	sort.Strings(s.c.entryIndex.Keys)
+	s.c.entryIndex.Count = len(s.c.entryIndex.Keys)
 
 	return nil
 }
@@ -309,6 +317,7 @@ func (s *Shim) loadNodes(rev int64) error {
 
 		for _, n := range nr.Nodes {
 			s.c.nodes[n.SpiffeId] = n
+			s.c.nodeIndex.Keys = append(s.c.nodeIndex.Keys, n.SpiffeId)
 		}
 
 		count := len(nr.Nodes)
@@ -319,6 +328,9 @@ func (s *Shim) loadNodes(rev int64) error {
 			break
 		}
 	}
+
+	sort.Strings(s.c.nodeIndex.Keys)
+	s.c.nodeIndex.Count = len(s.c.nodeIndex.Keys)
 
 	return nil
 }
@@ -371,6 +383,7 @@ func (s *Shim) loadTokens(rev int64) error {
 
 		for _, t := range tr.JoinTokens {
 			s.c.tokens[t.Token] = t
+			s.c.tokenIndex.Keys = append(s.c.tokenIndex.Keys, t.Token)
 		}
 
 		count := len(tr.JoinTokens)
@@ -381,6 +394,9 @@ func (s *Shim) loadTokens(rev int64) error {
 			break
 		}
 	}
+
+	sort.Strings(s.c.tokenIndex.Keys)
+	s.c.tokenIndex.Count = len(s.c.tokenIndex.Keys)
 
 	return nil
 }
