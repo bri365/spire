@@ -211,10 +211,10 @@ func (s *Shim) listAttestedNodes(ctx context.Context, revision int64,
 		return nil, 0, status.Error(codes.InvalidArgument, "cannot list by empty selectors set")
 	}
 
-	// If a specific store revision was not requested, get the current store revision for use in
-	// subsequent calls to ensure transactional consistency of index read operations.
+	// If specific rev not requested and we are filtering with one or more indices, get the
+	// current store revision for use in subsequent calls to ensure transactional consistency.
 	rev := revision
-	if rev == 0 {
+	if rev == 0 && (req.ByAttestationType != "" || req.ByBanned != nil || req.ByExpiresBefore != nil || req.BySelectorMatch != nil) {
 		res, err := s.Store.Get(ctx, &store.GetRequest{Key: NodePrefix, End: AllNodes, Limit: 1})
 		if err != nil {
 			return nil, 0, err
@@ -279,6 +279,7 @@ func (s *Shim) listAttestedNodes(ctx context.Context, revision int64,
 	count := len(idSets)
 	if count > 1 {
 		// intersect each additional query set into the first set
+		// resulting in a single set of IDs meeting all filter criteria
 		// TODO extract this into a shared utility library
 		for i := 1; i < count; i++ {
 			tmp := map[string]bool{}
@@ -302,8 +303,7 @@ func (s *Shim) listAttestedNodes(ctx context.Context, revision int64,
 			if len(p.Token) < 5 || p.Token[0:2] != NodePrefix {
 				return nil, 0, status.Errorf(codes.InvalidArgument, "could not parse token '%s'", p.Token)
 			}
-			// TODO one bit larger than token
-			key = fmt.Sprintf("%s!", p.Token)
+			key = stringPlusOne(p.Token)
 		}
 	}
 
@@ -323,49 +323,73 @@ func (s *Shim) listAttestedNodes(ctx context.Context, revision int64,
 		// Batches would be PageSize if paginated or a few hundred to a thousand at a time
 		var i int64 = 1
 		for _, id := range ids {
+			// Ignore entries from previous pages
 			if p != nil && len(p.Token) > 0 && nodeKey(id) < key {
 				continue
 			}
 
-			// TODO fetch these from cache
-			// If cache store revision is <= saved/requested revision above then it should be safe
-			// to fetch the items from cache. If an item has not yet been updated in the cache
-			// and is older than the stored index(es) the ID list was built from then:
-			// 1) the item was deleted; it will not be requested from the cache
-			// 2) the item was created; it is not present in cache and will be fetched from the store
-			// 3) the item was updated on a different server and the changes have not yet made it to
-			// this server. In this case, an older version of the item will be returned from cache.
-			// 3a) a non-filtered field of the item changed; the cached version returned
-			// 3b) a filtered field of the item changed;
-			// NOTE: if all cache updates share a single store revision number, then we could simply
-			// check that the store revision from the index fetches exactly matches the cache version.
-			res, err := s.Store.Get(ctx, &store.GetRequest{Key: nodeKey(id), Revision: rev})
-			if err != nil {
-				return nil, 0, err
+			n := &common.AttestedNode{}
+			cached := false
+			// Serve from cache if available and revision is acceptable
+			if s.c.nodeCacheEnabled && s.c.initialized {
+				s.c.mu.RLock()
+				if rev == s.c.storeRevision {
+					var ok bool
+					if n, ok = s.c.nodes[id]; ok {
+						cached = true
+					}
+				}
+				s.c.mu.RUnlock()
 			}
 
-			if len(res.Kvs) == 1 {
-				n := &common.AttestedNode{}
-				err = proto.Unmarshal(res.Kvs[0].Value, n)
+			if !cached {
+				// NOTE: looping one at a time will not scale to desired limits
+				// Reads should be batched in transactions
+				// Batches would be PageSize if paginated or a few hundred to a thousand at a time
+				res, err := s.Store.Get(ctx, &store.GetRequest{Key: nodeKey(id), Revision: rev})
 				if err != nil {
 					return nil, 0, err
 				}
-				if req.BySelectorMatch != nil {
-					if !s.nodeSelectorMatch(n, req.BySelectorMatch) {
-						// Failed selector match - skip this item
-						continue
-					}
-				} else if req.FetchSelectors == false {
-					// Do not return selectors if not requested or filtered by selectors
-					n.Selectors = nil
-				}
-				resp.Nodes = append(resp.Nodes, n)
-				lastKey = nodeKey(n.SpiffeId)
 
-				if limit > 0 && i == limit {
-					break
+				if len(res.Kvs) != 1 {
+					if len(res.Kvs) > 1 {
+						s.Log.Error(fmt.Sprintf("LN too many entries %v", res.Kvs))
+					}
+					continue
+				}
+
+				if err = proto.Unmarshal(res.Kvs[0].Value, n); err != nil {
+					return nil, 0, err
 				}
 			}
+
+			if req.BySelectorMatch != nil {
+				// Remove the overly optimistic results from above
+				if !s.nodeSelectorMatch(n, req.BySelectorMatch) {
+					continue
+				}
+			} else if req.FetchSelectors == false {
+				// Do not return selectors if not requested or filtered by selectors
+				new := &common.AttestedNode{
+					SpiffeId:            n.SpiffeId,
+					AttestationDataType: n.AttestationDataType,
+					CertNotAfter:        n.CertNotAfter,
+					CertSerialNumber:    n.CertSerialNumber,
+					NewCertNotAfter:     n.NewCertNotAfter,
+					NewCertSerialNumber: n.NewCertSerialNumber,
+					RevisionNumber:      n.RevisionNumber,
+				}
+				n = new
+			}
+
+			resp.Nodes = append(resp.Nodes, n)
+			lastKey = nodeKey(n.SpiffeId)
+
+			// If paginated, have we reached the page limit?
+			if limit > 0 && i == limit {
+				break
+			}
+
 			i++
 		}
 	} else {

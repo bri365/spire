@@ -272,7 +272,7 @@ func (s *Shim) ListBundles(ctx context.Context,
 	return
 }
 
-// listBundles retrieves an optionally paginated list of all bundles.
+// listBundles retrieves an optionally paginated list of bundles.
 // Store revision is accepted and returned for consistency across paginated calls.
 func (s *Shim) listBundles(ctx context.Context, rev int64,
 	req *datastore.ListBundlesRequest) (*datastore.ListBundlesResponse, int64, error) {
@@ -281,8 +281,11 @@ func (s *Shim) listBundles(ctx context.Context, rev int64,
 		return nil, 0, status.Error(codes.InvalidArgument, "cannot paginate with pagesize = 0")
 	}
 
+	resp := &datastore.ListBundlesResponse{}
+	lastKey := ""
+
 	// Start with all bundle identifiers and limit of 0 (no limit)
-	key := bundleKey("")
+	key := bundleKey(" ")
 	end := AllBundles
 	var limit int64
 
@@ -290,42 +293,46 @@ func (s *Shim) listBundles(ctx context.Context, rev int64,
 	if p != nil {
 		limit = int64(p.PageSize)
 		if len(p.Token) > 0 {
-			// Validate token
-			if len(p.Token) < 12 || p.Token[0:2] != key {
-				return nil, 0, status.Errorf(codes.InvalidArgument, "could not parse token '%s'", p.Token)
+			if len(p.Token) < 12 || p.Token[0:2] != BundlePrefix {
+				return nil, 0, status.Errorf(codes.InvalidArgument, "invalid token '%s'", p.Token)
 			}
-			// TODO one bit larger than token
-			key = fmt.Sprintf("%s ", p.Token)
+			key = stringPlusOne(p.Token)
 		}
+		p.Token = ""
+		resp.Pagination = p
 	}
 
-	resp := &datastore.ListBundlesResponse{}
-
-	// Serve from cache if available, not paginated, and rev matches or was not specified
+	// Serve from cache if available and revision is acceptable
 	if s.c.initialized && s.c.bundleCacheEnabled {
 		s.c.mu.RLock()
-		r := s.c.storeRevision
-		if p == nil && (rev == 0 || rev == r) {
-			resp.Bundles = make([]*common.Bundle, len(s.c.bundles))
-			i := 0
-			for _, bundle := range s.c.bundles {
-				resp.Bundles[i] = bundle
-				i++
+		if rev == 0 || rev == s.c.storeRevision {
+			index := s.cacheIndexFromKey(key)
+			if limit > 0 && limit < int64(len(index)) {
+				index = index[:limit]
+			}
+			resp.Bundles = make([]*common.Bundle, len(index))
+			for i, id := range index {
+				resp.Bundles[i] = s.c.bundles[id]
+				lastKey = id
+				if limit > 0 && int64(i) == limit-1 {
+					break
+				}
+			}
+			if p != nil && len(resp.Bundles) > 0 {
+				p.Token = bundleKey(lastKey)
 			}
 			s.c.mu.RUnlock()
-			return resp, r, nil
+			return resp, s.c.storeRevision, nil
 		}
 		s.c.mu.RUnlock()
 	}
 
-	// Pagination requested or cache does not support the requested rev
-	// TODO pagination support requires a sorted array of IDs be maintained with the cache entries.
+	// Cache not available or does not support the requested rev
 	res, err := s.Store.Get(ctx, &store.GetRequest{Key: key, End: end, Limit: limit, Revision: rev})
 	if err != nil {
 		return nil, 0, err
 	}
 
-	lastKey := ""
 	for _, kv := range res.Kvs {
 		b := &common.Bundle{}
 		err = proto.Unmarshal(kv.Value, b)
@@ -336,15 +343,11 @@ func (s *Shim) listBundles(ctx context.Context, rev int64,
 		lastKey = kv.Key
 	}
 
-	if p != nil {
-		p.Token = ""
+	if p != nil && len(resp.Bundles) > 0 {
 		// Note: In the event the total number of items exactly equals the page size,
-		// there may be one extra list call that returns no items. This fact is used
-		// in other parts of the code so it should not be optimized without consideration.
-		if len(resp.Bundles) > 0 {
-			p.Token = lastKey
-		}
-		resp.Pagination = p
+		// there may be one extra list call that returns no items.
+		// This behavior is used in the cache load bundles function.
+		p.Token = lastKey
 	}
 	return resp, res.Revision, nil
 }

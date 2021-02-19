@@ -167,8 +167,7 @@ func (s *Shim) listJoinTokens(ctx context.Context, rev int64,
 			if len(p.Token) < 3 || p.Token[0:2] != key {
 				return nil, 0, status.Errorf(codes.InvalidArgument, "could not parse token '%s'", p.Token)
 			}
-			// TODO one bit larger than token
-			key = fmt.Sprintf("%s ", p.Token)
+			key = stringPlusOne(p.Token)
 		}
 	}
 

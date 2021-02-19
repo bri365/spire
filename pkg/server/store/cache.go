@@ -670,7 +670,7 @@ func (s *Shim) watchTokens(rev int64) error {
 }
 
 // insertIndexKey inserts the given key into the given index if it does not already exist.
-// This function must be called with s.c.mu.Lock() already held.
+// NOTE: This function must be called with s.c.mu.Lock() already held.
 func (s *Shim) insertIndexKey(ci *cacheIndex, key string) {
 	i := sort.SearchStrings(ci.Keys, key)
 	if i < len(ci.Keys) && ci.Keys[i] == key {
@@ -685,7 +685,7 @@ func (s *Shim) insertIndexKey(ci *cacheIndex, key string) {
 }
 
 // removeIndexKey deletes the given key from the given index if it exists.
-// This function must be called with s.c.mu.Lock() already held.
+// NOTE: This function must be called with s.c.mu.Lock() already held.
 func (s *Shim) removeIndexKey(ci *cacheIndex, key string) {
 	i := sort.SearchStrings(ci.Keys, key)
 	if i < len(ci.Keys) && ci.Keys[i] == key {
@@ -697,34 +697,34 @@ func (s *Shim) removeIndexKey(ci *cacheIndex, key string) {
 	return
 }
 
-// findIndexKeyEnd returns a slice of keys from the given cache index bounded by key and end.
-// This function must be called with s.c.mu.RLock() already held.
-func (s *Shim) findIndexKeyEnd(key, end string) []string {
+// indexFromKey returns a slice of keys from the proper cache index,
+// beginning with where the object ID is or would be, if not present.
+// NOTE: This function must be called with s.c.mu.RLock() already held.
+func (s *Shim) cacheIndexFromKey(key string) []string {
+	id := ""
 	var ci *cacheIndex
 	if IsBundleKey(key) {
 		ci = s.c.bundleIndex
+		id, _ = bundleIDFromKey(key)
 	} else if IsEntryKey(key) {
 		ci = s.c.entryIndex
+		id, _ = entryIDFromKey(key)
 	} else if IsNodeKey(key) {
 		ci = s.c.nodeIndex
+		id, _ = nodeIDFromKey(key)
+	} else if IsTokenKey(key) {
+		ci = s.c.tokenIndex
+		id, _ = tokenIDFromKey(key)
 	} else {
-		s.Log.Error("Unknown key", "key", key)
+		s.Log.Error("iFK Unknown key", "key", key)
 		return []string{}
 	}
 
 	// Locate the index offsets for the beginning and end of the range
-	start := sort.SearchStrings(ci.Keys, key)
-	finish := sort.SearchStrings(ci.Keys, end)
-
-	if start > finish {
-		s.Log.Error("Invalid range", "key", key, "end", end)
-		return []string{}
-	}
-
+	start := sort.SearchStrings(ci.Keys, id)
 	if start == ci.Count {
-		// not found
 		return []string{}
 	}
 
-	return ci.Keys[start:finish]
+	return ci.Keys[start:]
 }

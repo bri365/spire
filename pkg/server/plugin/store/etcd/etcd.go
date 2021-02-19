@@ -321,7 +321,7 @@ func (st *Plugin) Set(ctx context.Context, req *store.SetRequest) (*store.SetRes
 		return nil, status.Error(codes.Aborted, fmt.Sprintf("%s %v", res, t.Responses))
 	}
 
-	// Send End of Transaction marker for watchers if requested
+	// Send End of Transaction marker if requested
 	if enableEotMarkers {
 		eot := fmt.Sprintf("%s%d", ss.TxPrefix, t.Header.Revision)
 		lease, err := st.Etcd.Grant(ctx, ss.TxEotTTL)
@@ -346,7 +346,8 @@ func (st *Plugin) Set(ctx context.Context, req *store.SetRequest) (*store.SetRes
 	// attack scenario, an attacker could try to rotate the agent SVID immediately after the authentic
 	// agent, hitting the cache to authenticate, and assuming the identity of the agent with a second newer.
 	// This scenario may also be prevented by having the rotation query the backend store before updating the
-	// SVID regardless of authentication.
+	// SVID regardless of authentication. Additionally, a "stale rotation" attempt will fail the transaction
+	// consistency check when the update write is attempted on the backend.
 	if writeResponseDelay > 0 {
 		time.Sleep(time.Duration(writeResponseDelay) * time.Millisecond)
 	}

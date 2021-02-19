@@ -253,10 +253,10 @@ func (s *Shim) listRegistrationEntries(ctx context.Context, revision int64,
 		return nil, 0, status.Error(codes.InvalidArgument, "cannot list by empty selector set")
 	}
 
-	// If specific rev not requested, get the current store revision for use in subsequent calls
-	// to ensure transactional consistency of index read operations.
+	// If specific rev not requested and we are filtering with one or more indices, get the
+	// current store revision for use in subsequent calls to ensure transactional consistency.
 	rev := revision
-	if rev == 0 {
+	if rev == 0 && (req.ByFederatesWith != nil || req.ByParentId != nil || req.BySpiffeId != nil || req.BySelectors != nil) {
 		res, err := s.Store.Get(ctx, &store.GetRequest{Key: EntryPrefix, End: AllEntries, Limit: 1})
 		if err != nil {
 			return nil, 0, err
@@ -264,7 +264,7 @@ func (s *Shim) listRegistrationEntries(ctx context.Context, revision int64,
 		rev = res.Revision
 	}
 
-	// A collection of IDs for the filtered results - boolean maps make intersection easier to read
+	// A collection of ID sets for the filtered results - boolean maps make intersection easier to read
 	// NOTE: for performance reasons, organize the following filters with smallest expected results first
 	idSets := []map[string]bool{}
 
@@ -340,6 +340,7 @@ func (s *Shim) listRegistrationEntries(ctx context.Context, revision int64,
 	if count > 1 {
 		// intersect each additional query set into the first set
 		// resulting in a single set of IDs meeting all filter criteria
+		// TODO pull this out into a separate utility function
 		for i := 1; i < count; i++ {
 			tmp := map[string]bool{}
 			for id := range idSets[0] {
@@ -352,7 +353,7 @@ func (s *Shim) listRegistrationEntries(ctx context.Context, revision int64,
 		}
 	}
 
-	key := entryKey("")
+	key := entryKey(" ")
 	var limit int64
 
 	p := req.Pagination
@@ -360,10 +361,9 @@ func (s *Shim) listRegistrationEntries(ctx context.Context, revision int64,
 		limit = int64(p.PageSize)
 		if len(p.Token) > 0 {
 			if len(p.Token) < 5 || p.Token[0:2] != EntryPrefix {
-				return nil, 0, status.Errorf(codes.InvalidArgument, "could not parse token '%s'", p.Token)
+				return nil, 0, status.Errorf(codes.InvalidArgument, "invalid token '%s'", p.Token)
 			}
-			// TODO one bit larger than token
-			key = fmt.Sprintf("%s!", p.Token)
+			key = stringPlusOne(p.Token)
 		}
 	}
 
@@ -378,9 +378,6 @@ func (s *Shim) listRegistrationEntries(ctx context.Context, revision int64,
 		sort.Strings(ids)
 
 		// Get the specified list of registered entries from the query filters
-		// NOTE: looping will not scale to desired limits; these should be served from cache
-		// An interim approach would be to send batches of reads as a single transaction
-		// Batches would be PageSize if paginated or a few hundred to a thousand at a time
 		var i int64 = 1
 		for _, id := range ids {
 			// Ignore entries from previous pages
@@ -388,22 +385,39 @@ func (s *Shim) listRegistrationEntries(ctx context.Context, revision int64,
 				continue
 			}
 
-			// TODO Fetch these from cache iof enabled and revision matches.
-			res, err := s.Store.Get(ctx, &store.GetRequest{Key: entryKey(id), Revision: rev})
-			if err != nil {
-				return nil, 0, err
-			}
-
-			if len(res.Kvs) != 1 {
-				if len(res.Kvs) > 1 {
-					s.Log.Error(fmt.Sprintf("Too many entries %v", res.Kvs))
-				}
-				continue
-			}
-
 			e := &common.RegistrationEntry{}
-			if err = proto.Unmarshal(res.Kvs[0].Value, e); err != nil {
-				return nil, 0, err
+			cached := false
+			// Serve from cache if available and revision is acceptable
+			if s.c.entryCacheEnabled && s.c.initialized {
+				s.c.mu.RLock()
+				if rev == s.c.storeRevision {
+					var ok bool
+					if e, ok = s.c.entries[id]; ok {
+						cached = true
+					}
+				}
+				s.c.mu.RUnlock()
+			}
+
+			if !cached {
+				// NOTE: looping one at a time will not scale to desired limits
+				// Reads should be batched in transactions
+				// Batches would be PageSize if paginated or a few hundred to a thousand at a time
+				res, err := s.Store.Get(ctx, &store.GetRequest{Key: entryKey(id), Revision: rev})
+				if err != nil {
+					return nil, 0, err
+				}
+
+				if len(res.Kvs) != 1 {
+					if len(res.Kvs) > 1 {
+						s.Log.Error(fmt.Sprintf("LE too many entries %v", res.Kvs))
+					}
+					continue
+				}
+
+				if err = proto.Unmarshal(res.Kvs[0].Value, e); err != nil {
+					return nil, 0, err
+				}
 			}
 
 			if req.BySelectors != nil {
@@ -426,30 +440,42 @@ func (s *Shim) listRegistrationEntries(ctx context.Context, revision int64,
 	} else {
 		// No filters, get all registered entries up to limit
 
-		// Serve from cache if available, not paginated, and rev matches or was not specified
+		// Serve from cache if available and revision is acceptable
 		if s.c.entryCacheEnabled && s.c.initialized {
 			s.c.mu.RLock()
-			r := s.c.storeRevision
-			if p == nil && (rev == 0 || rev == r) {
-				resp.Entries = make([]*common.RegistrationEntry, len(s.c.entries))
-				i := 0
-				for _, entry := range s.c.entries {
-					resp.Entries[i] = entry
-					i++
+			if revision == 0 || revision == s.c.storeRevision {
+				index := s.cacheIndexFromKey(key)
+				if limit > 0 && limit < int64(len(index)) {
+					index = index[:limit]
+				}
+				resp.Entries = make([]*common.RegistrationEntry, len(index))
+				for i, id := range index {
+					resp.Entries[i] = s.c.entries[id]
+					lastKey = id
+					if limit > 0 && int64(i) == limit-1 {
+						break
+					}
+				}
+				if p != nil {
+					p.Token = ""
+					if len(resp.Entries) > 0 {
+						p.Token = entryKey(lastKey)
+					}
+					resp.Pagination = p
 				}
 				s.c.mu.RUnlock()
-				return resp, r, nil
+				return resp, s.c.storeRevision, nil
 			}
 			s.c.mu.RUnlock()
 		}
 
-		// Pagination requested or cache does not support the requested rev
-		// TODO pagination support requires a sorted array of IDs be maintained with the cache entries.
+		// Cache not available or does not support the requested revision
 		res, err := s.Store.Get(ctx, &store.GetRequest{Key: key, End: AllEntries, Limit: limit, Revision: rev})
 		if err != nil {
 			return nil, 0, err
 		}
 
+		rev = res.Revision
 		for _, kv := range res.Kvs {
 			e := &common.RegistrationEntry{}
 			if err = proto.Unmarshal(kv.Value, e); err != nil {
@@ -463,8 +489,8 @@ func (s *Shim) listRegistrationEntries(ctx context.Context, revision int64,
 	if p != nil {
 		p.Token = ""
 		// Note: In the event the total number of items exactly equals the page size,
-		// there may be one extra list call that returns no items. This fact is used
-		// in other parts of the code so it should not be optimized without consideration.
+		// there may be one extra list call that returns no items.
+		// This behavior is used in the cache load entries function.
 		if len(resp.Entries) > 0 {
 			p.Token = lastKey
 		}

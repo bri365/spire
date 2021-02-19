@@ -273,7 +273,7 @@ func (s *PluginSuite) TestListBundlesWithPagination() {
 		{
 			name:         "invalid token",
 			expectedList: []*common.Bundle{},
-			expectedErr:  "rpc error: code = InvalidArgument desc = could not parse token 'invalid token'",
+			expectedErr:  "rpc error: code = InvalidArgument desc = invalid token 'invalid token'",
 			pagination: &datastore.Pagination{
 				Token:    "invalid token",
 				PageSize: 2,
