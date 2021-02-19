@@ -126,6 +126,7 @@ func (s *Shim) DeleteAttestedNode(ctx context.Context,
 	tx := []*store.SetRequestElement{{Operation: store.Operation_DELETE, Kvs: del}}
 
 	// Invalidate cache entry here to prevent race condition with async watcher
+	// TODO make this controlled by a config flag
 	s.removeNodeCacheEntry(n.SpiffeId)
 
 	_, err = s.Store.Set(ctx, &store.SetRequest{Elements: tx})
@@ -144,6 +145,7 @@ func (s *Shim) FetchAttestedNode(ctx context.Context,
 		return s.DataStore.FetchAttestedNode(ctx, req)
 	}
 
+	// TODO config flag to enable fetch from cache
 	node := s.fetchNodeCacheEntry(req.SpiffeId)
 	if node != nil {
 		resp = &datastore.FetchAttestedNodeResponse{Node: node}

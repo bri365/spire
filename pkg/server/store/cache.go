@@ -205,16 +205,17 @@ func (s *Shim) loadBundles(rev int64) error {
 
 // Add or update the given bundle in the cache
 func (s *Shim) setBundleCacheEntry(id string, bundle *common.Bundle) {
-	if s.c.bundleCacheEnabled {
+	if s.c.bundleCacheEnabled && s.c.initialized {
 		s.c.mu.Lock()
 		s.c.bundles[id] = bundle
+		s.insertIndexKey(s.c.bundleIndex, id)
 		s.c.mu.Unlock()
 	}
 }
 
 // Fetch the given bundle from the cache
 func (s *Shim) fetchBundleCacheEntry(id string) *common.Bundle {
-	if !s.c.bundleCacheEnabled {
+	if !s.c.bundleCacheEnabled && s.c.initialized {
 		return nil
 	}
 	s.c.mu.RLock()
@@ -224,9 +225,10 @@ func (s *Shim) fetchBundleCacheEntry(id string) *common.Bundle {
 
 // Remove the given bundle from the cache
 func (s *Shim) removeBundleCacheEntry(id string) {
-	if s.c.bundleCacheEnabled {
+	if s.c.bundleCacheEnabled && s.c.initialized {
 		s.c.mu.Lock()
 		delete(s.c.bundles, id)
+		s.removeIndexKey(s.c.bundleIndex, id)
 		s.c.mu.Unlock()
 	}
 }
@@ -271,16 +273,17 @@ func (s *Shim) loadEntries(rev int64) error {
 
 // Add or update the given attested entry in the cache
 func (s *Shim) setEntryCacheEntry(id string, entry *common.RegistrationEntry) {
-	if s.c.entryCacheEnabled {
+	if s.c.entryCacheEnabled && s.c.initialized {
 		s.c.mu.Lock()
 		s.c.entries[id] = entry
+		s.insertIndexKey(s.c.entryIndex, id)
 		s.c.mu.Unlock()
 	}
 }
 
 // Fetch the given attested entry from the cache
 func (s *Shim) fetchEntryCacheEntry(id string) *common.RegistrationEntry {
-	if !s.c.entryCacheEnabled {
+	if !s.c.entryCacheEnabled && s.c.initialized {
 		return nil
 	}
 	s.c.mu.RLock()
@@ -290,9 +293,10 @@ func (s *Shim) fetchEntryCacheEntry(id string) *common.RegistrationEntry {
 
 // Remove the given registration entry from the cache
 func (s *Shim) removeEntryCacheEntry(id string) {
-	if s.c.entryCacheEnabled {
+	if s.c.entryCacheEnabled && s.c.initialized {
 		s.c.mu.Lock()
 		delete(s.c.entries, id)
+		s.removeIndexKey(s.c.entryIndex, id)
 		s.c.mu.Unlock()
 	}
 }
@@ -337,16 +341,17 @@ func (s *Shim) loadNodes(rev int64) error {
 
 // Add or update the given attested node in the cache
 func (s *Shim) setNodeCacheEntry(id string, node *common.AttestedNode) {
-	if s.c.nodeCacheEnabled {
+	if s.c.nodeCacheEnabled && s.c.initialized {
 		s.c.mu.Lock()
 		s.c.nodes[id] = node
+		s.insertIndexKey(s.c.nodeIndex, id)
 		s.c.mu.Unlock()
 	}
 }
 
 // Fetch the given attested node from the cache
 func (s *Shim) fetchNodeCacheEntry(id string) *common.AttestedNode {
-	if !s.c.nodeCacheEnabled {
+	if !s.c.nodeCacheEnabled && s.c.initialized {
 		return nil
 	}
 	s.c.mu.RLock()
@@ -356,9 +361,10 @@ func (s *Shim) fetchNodeCacheEntry(id string) *common.AttestedNode {
 
 // Remove the given attested node from the cache
 func (s *Shim) removeNodeCacheEntry(id string) {
-	if s.c.nodeCacheEnabled {
+	if s.c.nodeCacheEnabled && s.c.initialized {
 		s.c.mu.Lock()
 		delete(s.c.nodes, id)
+		s.removeIndexKey(s.c.nodeIndex, id)
 		s.c.mu.Unlock()
 	}
 }
@@ -403,16 +409,17 @@ func (s *Shim) loadTokens(rev int64) error {
 
 // Add or update the given join token in the cache
 func (s *Shim) setTokenCacheEntry(id string, token *datastore.JoinToken) {
-	if s.c.tokenCacheEnabled {
+	if s.c.tokenCacheEnabled && s.c.initialized {
 		s.c.mu.Lock()
 		s.c.tokens[id] = token
+		s.insertIndexKey(s.c.tokenIndex, id)
 		s.c.mu.Unlock()
 	}
 }
 
 // Fetch the given join token from the cache
 func (s *Shim) fetchTokenCacheEntry(id string) *datastore.JoinToken {
-	if !s.c.tokenCacheEnabled {
+	if !s.c.tokenCacheEnabled && s.c.initialized {
 		return nil
 	}
 	s.c.mu.RLock()
@@ -422,9 +429,10 @@ func (s *Shim) fetchTokenCacheEntry(id string) *datastore.JoinToken {
 
 // Remove the given join token from the cache
 func (s *Shim) removeTokenCacheEntry(id string) {
-	if s.c.tokenCacheEnabled {
+	if s.c.tokenCacheEnabled && s.c.initialized {
 		s.c.mu.Lock()
 		delete(s.c.tokens, id)
+		s.removeIndexKey(s.c.tokenIndex, id)
 		s.c.mu.Unlock()
 	}
 }
