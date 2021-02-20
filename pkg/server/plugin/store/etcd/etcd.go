@@ -43,8 +43,7 @@ var (
 	etcdError = errs.Class("store-etcd")
 
 	// Default values may be overridden by configuration
-	dialTimeout    = 5 * time.Second
-	requestTimeout = 10 * time.Second
+	dialTimeout = 5 * time.Second
 
 	enableEotMarkers   = false
 	writeResponseDelay = 0
@@ -76,19 +75,32 @@ func builtin(p *Plugin) catalog.Plugin {
 
 // Pointers allow distinction between "unset" and "zero" values
 type configuration struct {
-	Endpoints          []string `hcl:"endpoints" json:"endpoints"`
-	RootCAPath         string   `hcl:"root_ca_path" json:"root_ca_path"`
-	ClientCertPath     string   `hcl:"client_cert_path" json:"client_cert_path"`
-	ClientKeyPath      string   `hcl:"client_key_path" json:"client_key_path"`
-	DialTimeout        *int     `hcl:"dial_timeout" json:"dial_timeout"`
-	RequestTimeout     *int     `hcl:"request_timeout" json:"request_timeout"`
-	DisableBundleCache *bool    `hcl:"disable_bundle_cache" json:"disable_bundle_cache"`
-	DisableEntryCache  *bool    `hcl:"disable_entry_cache" json:"disable_entry_cache"`
-	DisableNodeCache   *bool    `hcl:"disable_node_cache" json:"disable_node_cache"`
-	DisableTokenCache  *bool    `hcl:"disable_token_cache" json:"disable_token_cache"`
-	EnableEotMarkers   *bool    `hcl:"enable_eot_markers" json:"enable_eot_markers"`
-	HeartbeatInterval  *int     `hcl:"heartbeat_interval" json:"heartbeat_interval"`
-	WriteResponseDelay *int     `hcl:"write_response_delay" json:"write_response_delay"`
+	Endpoints      []string `hcl:"endpoints" json:"endpoints"`
+	RootCAPath     string   `hcl:"root_ca_path" json:"root_ca_path"`
+	ClientCertPath string   `hcl:"client_cert_path" json:"client_cert_path"`
+	ClientKeyPath  string   `hcl:"client_key_path" json:"client_key_path"`
+	DialTimeout    *int     `hcl:"dial_timeout" json:"dial_timeout"`
+
+	EnableBundleCache           *bool `hcl:"enable_bundle_cache" json:"enable_bundle_cache"`
+	EnableBundleCacheInvalidate bool  `hcl:"enable_bundle_cache_invalidate" json:"enable_bundle_cache_invalidate"`
+	EnableBundleCacheUpdate     bool  `hcl:"enable_bundle_cache_update" json:"enable_bundle_cache_update"`
+
+	EnableEntryCache           *bool `hcl:"enable_entry_cache" json:"enable_entry_cache"`
+	EnableEntryCacheInvalidate bool  `hcl:"enable_entry_cache_invalidate" json:"enable_entry_cache_invalidate"`
+	EnableEntryCacheUpdate     bool  `hcl:"enable_entry_cache_update" json:"enable_entry_cache_update"`
+
+	EnableNodeCache           *bool `hcl:"enable_node_cache" json:"enable_node_cache"`
+	EnableNodeCacheFetch      *bool `hcl:"enable_node_cache_fetch" json:"enable_node_cache_fetch"`
+	EnableNodeCacheInvalidate bool  `hcl:"enable_node_cache_invalidate" json:"enable_node_cache_invalidate"`
+	EnableNodeCacheUpdate     bool  `hcl:"enable_node_cache_update" json:"enable_node_cache_update"`
+
+	EnableTokenCache           *bool `hcl:"enable_token_cache" json:"enable_token_cache"`
+	EnableTokenCacheInvalidate bool  `hcl:"enable_token_cache_invalidate" json:"enable_token_cache_invalidate"`
+	EnableTokenCacheUpdate     bool  `hcl:"enable_token_cache_update" json:"enable_token_cache_update"`
+
+	EnableEotMarkers   *bool `hcl:"enable_eot_markers" json:"enable_eot_markers"`
+	HeartbeatInterval  *int  `hcl:"heartbeat_interval" json:"heartbeat_interval"`
+	WriteResponseDelay *int  `hcl:"write_response_delay" json:"write_response_delay"`
 
 	// Undocumented flags
 	LogOps bool `hcl:"log_ops" json:"log_ops"`
@@ -135,8 +147,8 @@ func (st *Plugin) Configure(ctx context.Context, req *spi.ConfigureRequest) (*sp
 		dialTimeout = time.Duration(*cfg.DialTimeout) * time.Second
 	}
 
-	if cfg.RequestTimeout != nil {
-		requestTimeout = time.Duration(*cfg.RequestTimeout) * time.Second
+	if cfg.EnableEotMarkers != nil {
+		enableEotMarkers = *cfg.EnableEotMarkers
 	}
 
 	if cfg.WriteResponseDelay != nil {
@@ -145,32 +157,49 @@ func (st *Plugin) Configure(ctx context.Context, req *spi.ConfigureRequest) (*sp
 
 	// Set Store level configuration
 	st.Cfg = &ss.Configuration{
+		EnableBundleCache:           true,
+		EnableBundleCacheInvalidate: cfg.EnableBundleCacheInvalidate,
+		EnableBundleCacheUpdate:     cfg.EnableBundleCacheUpdate,
+
+		EnableEntryCache:           true,
+		EnableEntryCacheInvalidate: cfg.EnableEntryCacheInvalidate,
+		EnableEntryCacheUpdate:     cfg.EnableEntryCacheUpdate,
+
+		EnableNodeCache:           true,
+		EnableNodeCacheFetch:      true,
+		EnableNodeCacheInvalidate: cfg.EnableNodeCacheInvalidate,
+		EnableNodeCacheUpdate:     cfg.EnableNodeCacheUpdate,
+
+		EnableTokenCache:           true,
+		EnableTokenCacheInvalidate: cfg.EnableTokenCacheInvalidate,
+		EnableTokenCacheUpdate:     cfg.EnableTokenCacheUpdate,
+
 		HeartbeatInterval: ss.HeartbeatDefaultInterval,
-	}
-
-	if cfg.DisableBundleCache != nil {
-		st.Cfg.DisableBundleCache = *cfg.DisableBundleCache
-	}
-
-	if cfg.DisableEntryCache != nil {
-		st.Cfg.DisableEntryCache = *cfg.DisableEntryCache
-	}
-
-	if cfg.DisableNodeCache != nil {
-		st.Cfg.DisableNodeCache = *cfg.DisableNodeCache
-	}
-
-	if cfg.DisableTokenCache != nil {
-		st.Cfg.DisableTokenCache = *cfg.DisableTokenCache
-	}
-
-	if cfg.EnableEotMarkers != nil {
-		st.Cfg.EnableEotMarkers = *cfg.EnableEotMarkers
-		enableEotMarkers = *cfg.EnableEotMarkers
 	}
 
 	if cfg.HeartbeatInterval != nil {
 		st.Cfg.HeartbeatInterval = *cfg.HeartbeatInterval
+	}
+
+	// Store configuration settings
+	if cfg.EnableBundleCache != nil {
+		st.Cfg.EnableBundleCache = *cfg.EnableBundleCache
+	}
+
+	if cfg.EnableEntryCache != nil {
+		st.Cfg.EnableEntryCache = *cfg.EnableEntryCache
+	}
+
+	if cfg.EnableNodeCache != nil {
+		st.Cfg.EnableNodeCache = *cfg.EnableNodeCache
+	}
+
+	if cfg.EnableNodeCacheFetch != nil {
+		st.Cfg.EnableNodeCacheFetch = *cfg.EnableNodeCacheFetch
+	}
+
+	if cfg.EnableTokenCache != nil {
+		st.Cfg.EnableTokenCache = *cfg.EnableTokenCache
 	}
 
 	// TODO set proper logging for etcd client

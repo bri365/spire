@@ -59,21 +59,30 @@ type Cache struct {
 	initialized       bool
 	storeRevision     int64
 
-	bundleCacheEnabled bool
-	bundleIndex        *cacheIndex
-	bundles            map[string]*common.Bundle
+	bundleCacheEnabled    bool
+	bundleCacheInvalidate bool
+	bundleCacheUpdate     bool
+	bundleIndex           *cacheIndex
+	bundles               map[string]*common.Bundle
 
-	entryCacheEnabled bool
-	entryIndex        *cacheIndex
-	entries           map[string]*common.RegistrationEntry
+	entryCacheEnabled    bool
+	entryCacheInvalidate bool
+	entryCacheUpdate     bool
+	entryIndex           *cacheIndex
+	entries              map[string]*common.RegistrationEntry
 
-	nodeCacheEnabled bool
-	nodeIndex        *cacheIndex
-	nodes            map[string]*common.AttestedNode
+	nodeCacheEnabled    bool
+	nodeCacheFetch      bool
+	nodeCacheInvalidate bool
+	nodeCacheUpdate     bool
+	nodeIndex           *cacheIndex
+	nodes               map[string]*common.AttestedNode
 
-	tokenCacheEnabled bool
-	tokenIndex        *cacheIndex
-	tokens            map[string]*datastore.JoinToken
+	tokenCacheEnabled    bool
+	tokenCacheInvalidate bool
+	tokenCacheUpdate     bool
+	tokenIndex           *cacheIndex
+	tokens               map[string]*datastore.JoinToken
 }
 
 // Store cache constants
@@ -100,10 +109,22 @@ func NewCache(cfg *Configuration) Cache {
 		nodeIndex:   &cacheIndex{Keys: []string{}},
 		tokenIndex:  &cacheIndex{Keys: []string{}},
 
-		bundleCacheEnabled: !cfg.DisableBundleCache,
-		entryCacheEnabled:  !cfg.DisableEntryCache,
-		nodeCacheEnabled:   !cfg.DisableNodeCache,
-		tokenCacheEnabled:  !cfg.DisableTokenCache,
+		bundleCacheEnabled:    cfg.EnableBundleCache,
+		bundleCacheInvalidate: cfg.EnableBundleCacheInvalidate,
+		bundleCacheUpdate:     cfg.EnableBundleCacheUpdate,
+
+		entryCacheEnabled:    cfg.EnableEntryCache,
+		entryCacheInvalidate: cfg.EnableEntryCacheInvalidate,
+		entryCacheUpdate:     cfg.EnableEntryCacheUpdate,
+
+		nodeCacheEnabled:    cfg.EnableNodeCache,
+		nodeCacheFetch:      cfg.EnableNodeCacheFetch,
+		nodeCacheInvalidate: cfg.EnableNodeCacheInvalidate,
+		nodeCacheUpdate:     cfg.EnableNodeCacheUpdate,
+
+		tokenCacheEnabled:    cfg.EnableTokenCache,
+		tokenCacheInvalidate: cfg.EnableTokenCacheInvalidate,
+		tokenCacheUpdate:     cfg.EnableTokenCacheUpdate,
 
 		heartbeatInterval: time.Duration(cfg.HeartbeatInterval) * time.Second,
 	}

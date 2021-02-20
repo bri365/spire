@@ -234,12 +234,9 @@ func (s *PluginSuite) TestFetchAttestedNodesWithPagination() {
 		expectedErr        string
 	}{
 		{
-			name: "fetch without pagination",
-			req:  &datastore.ListAttestedNodesRequest{},
-			// TODO expectedList: []*common.AttestedNode{aNode1, aNode2, aNode3, aNode4, aNode5},
-			expectedList: []*common.AttestedNode{
-				aNode1WithSelectors, aNode2WithSelectors, aNode3WithSelectors,
-				aNode4WithSelectors, aNode5},
+			name:         "fetch without pagination",
+			req:          &datastore.ListAttestedNodesRequest{},
+			expectedList: []*common.AttestedNode{aNode1, aNode2, aNode3, aNode4, aNode5},
 		},
 		{
 			name: "pagination without token",

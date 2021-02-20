@@ -40,13 +40,24 @@ type Shim struct {
 
 // Configuration represents store wide config, supplied by the plugin
 type Configuration struct {
-	DisableBundleCache bool
-	DisableEntryCache  bool
-	DisableNodeCache   bool
-	DisableTokenCache  bool
-	EnableEotMarkers   bool
-	HeartbeatInterval  int
-	WriteResponseDelay int
+	EnableBundleCache           bool `hcl:"enable_bundle_cache" json:"enable_bundle_cache"`
+	EnableBundleCacheInvalidate bool `hcl:"enable_bundle_cache_invalidate" json:"enable_bundle_cache_invalidate"`
+	EnableBundleCacheUpdate     bool `hcl:"enable_bundle_cache_update" json:"enable_bundle_cache_update"`
+
+	EnableEntryCache           bool `hcl:"enable_entry_cache" json:"enable_entry_cache"`
+	EnableEntryCacheInvalidate bool `hcl:"enable_entry_cache_invalidate" json:"enable_entry_cache_invalidate"`
+	EnableEntryCacheUpdate     bool `hcl:"enable_entry_cache_update" json:"enable_entry_cache_update"`
+
+	EnableNodeCache           bool `hcl:"enable_node_cache" json:"enable_node_cache"`
+	EnableNodeCacheFetch      bool `hcl:"enable_node_cache_fetch" json:"enable_node_cache_fetch"`
+	EnableNodeCacheInvalidate bool `hcl:"enable_node_cache_invalidate" json:"enable_node_cache_invalidate"`
+	EnableNodeCacheUpdate     bool `hcl:"enable_node_cache_update" json:"enable_node_cache_update"`
+
+	EnableTokenCache           bool `hcl:"enable_token_cache" json:"enable_token_cache"`
+	EnableTokenCacheInvalidate bool `hcl:"enable_token_cache_invalidate" json:"enable_token_cache_invalidate"`
+	EnableTokenCacheUpdate     bool `hcl:"enable_token_cache_update" json:"enable_token_cache_update"`
+
+	HeartbeatInterval int
 }
 
 // Key creation constants for items and indices

@@ -169,7 +169,9 @@ func (s *Shim) DeleteRegistrationEntry(ctx context.Context,
 	tx := []*store.SetRequestElement{{Operation: store.Operation_DELETE, Kvs: del}}
 
 	// Invalidate cache entry here to prevent race condition with async watcher
-	s.removeEntryCacheEntry(e.EntryId)
+	if s.c.entryCacheInvalidate {
+		s.removeEntryCacheEntry(e.EntryId)
+	}
 
 	_, err = s.Store.Set(ctx, &store.SetRequest{Elements: tx})
 	if err != nil {
@@ -197,8 +199,6 @@ func (s *Shim) FetchRegistrationEntry(ctx context.Context,
 	if resp.Entry == nil {
 		return
 	}
-
-	s.setEntryCacheEntry(req.EntryId, entry)
 
 	return
 }
@@ -701,7 +701,9 @@ func (s *Shim) UpdateRegistrationEntry(ctx context.Context,
 	tx = append(tx, &store.SetRequestElement{Kvs: put, Operation: store.Operation_PUT})
 
 	// Invalidate cache entry here to prevent race condition with async watcher
-	s.removeEntryCacheEntry(e.EntryId)
+	if s.c.entryCacheInvalidate {
+		s.removeEntryCacheEntry(e.EntryId)
+	}
 
 	// Submit transaction
 	_, err = s.Store.Set(ctx, &store.SetRequest{Elements: tx})

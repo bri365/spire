@@ -126,8 +126,9 @@ func (s *Shim) DeleteAttestedNode(ctx context.Context,
 	tx := []*store.SetRequestElement{{Operation: store.Operation_DELETE, Kvs: del}}
 
 	// Invalidate cache entry here to prevent race condition with async watcher
-	// TODO make this controlled by a config flag
-	s.removeNodeCacheEntry(n.SpiffeId)
+	if s.c.nodeCacheInvalidate {
+		s.removeNodeCacheEntry(n.SpiffeId)
+	}
 
 	_, err = s.Store.Set(ctx, &store.SetRequest{Elements: tx})
 	if err != nil {
@@ -145,11 +146,12 @@ func (s *Shim) FetchAttestedNode(ctx context.Context,
 		return s.DataStore.FetchAttestedNode(ctx, req)
 	}
 
-	// TODO config flag to enable fetch from cache
-	node := s.fetchNodeCacheEntry(req.SpiffeId)
-	if node != nil {
-		resp = &datastore.FetchAttestedNodeResponse{Node: node}
-		return
+	if s.c.nodeCacheFetch {
+		node := s.fetchNodeCacheEntry(req.SpiffeId)
+		if node != nil {
+			resp = &datastore.FetchAttestedNodeResponse{Node: node}
+			return
+		}
 	}
 
 	resp, _, err = s.fetchNode(ctx, req)
@@ -157,7 +159,9 @@ func (s *Shim) FetchAttestedNode(ctx context.Context,
 		return
 	}
 
-	s.setNodeCacheEntry(req.SpiffeId, node)
+	if s.c.nodeCacheUpdate {
+		s.setNodeCacheEntry(req.SpiffeId, resp.Node)
+	}
 
 	return
 }
@@ -372,16 +376,7 @@ func (s *Shim) listAttestedNodes(ctx context.Context, revision int64,
 				}
 			} else if req.FetchSelectors == false {
 				// Do not return selectors if not requested or filtered by selectors
-				new := &common.AttestedNode{
-					SpiffeId:            n.SpiffeId,
-					AttestationDataType: n.AttestationDataType,
-					CertNotAfter:        n.CertNotAfter,
-					CertSerialNumber:    n.CertSerialNumber,
-					NewCertNotAfter:     n.NewCertNotAfter,
-					NewCertSerialNumber: n.NewCertSerialNumber,
-					RevisionNumber:      n.RevisionNumber,
-				}
-				n = new
+				n = nodeWithoutSelectors(n)
 			}
 
 			resp.Nodes = append(resp.Nodes, n)
@@ -428,7 +423,8 @@ func (s *Shim) listAttestedNodes(ctx context.Context, revision int64,
 				return nil, 0, err
 			}
 			if req.FetchSelectors == false {
-				n.Selectors = nil
+				// Do not return selectors if not requested
+				n = nodeWithoutSelectors(n)
 			}
 			resp.Nodes = append(resp.Nodes, n)
 			lastKey = kv.Key
@@ -447,6 +443,19 @@ func (s *Shim) listAttestedNodes(ctx context.Context, revision int64,
 	}
 
 	return resp, rev, nil
+}
+
+// nodeWithoutSelectors return a copy of an attested node without selectors.
+func nodeWithoutSelectors(n *common.AttestedNode) *common.AttestedNode {
+	return &common.AttestedNode{
+		SpiffeId:            n.SpiffeId,
+		AttestationDataType: n.AttestationDataType,
+		CertNotAfter:        n.CertNotAfter,
+		CertSerialNumber:    n.CertSerialNumber,
+		NewCertNotAfter:     n.NewCertNotAfter,
+		NewCertSerialNumber: n.NewCertSerialNumber,
+		RevisionNumber:      n.RevisionNumber,
+	}
 }
 
 // UpdateAttestedNode updates cert serial number and/or expiration for the given node.
@@ -537,7 +546,9 @@ func (s *Shim) UpdateAttestedNode(ctx context.Context,
 	tx = append(tx, &store.SetRequestElement{Kvs: put, Operation: store.Operation_PUT})
 
 	// Invalidate cache entry here to prevent race condition with async watcher
-	s.removeNodeCacheEntry(n.SpiffeId)
+	if s.c.nodeCacheInvalidate {
+		s.removeNodeCacheEntry(n.SpiffeId)
+	}
 
 	// Submit transaction
 	_, err = s.Store.Set(ctx, &store.SetRequest{Elements: tx})

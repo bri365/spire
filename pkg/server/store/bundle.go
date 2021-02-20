@@ -191,7 +191,9 @@ func (s *Shim) DeleteBundle(ctx context.Context,
 	tx := []*store.SetRequestElement{{Operation: store.Operation_DELETE, Kvs: del}}
 
 	// Invalidate cache entry here to prevent race condition with async watcher
-	s.removeBundleCacheEntry(id)
+	if s.c.bundleCacheInvalidate {
+		s.removeBundleCacheEntry(id)
+	}
 
 	_, err = s.Store.Set(ctx, &store.SetRequest{Elements: tx})
 	if err != nil {
@@ -221,6 +223,7 @@ func (s *Shim) FetchBundle(ctx context.Context,
 	bundle := s.fetchBundleCacheEntry(req.TrustDomainId)
 	if bundle != nil {
 		resp = &datastore.FetchBundleResponse{Bundle: bundle}
+		// TODO fall through on cache miss?
 		return
 	}
 
@@ -228,8 +231,6 @@ func (s *Shim) FetchBundle(ctx context.Context,
 	if resp.Bundle == nil {
 		return
 	}
-
-	s.setBundleCacheEntry(req.TrustDomainId, resp.Bundle)
 
 	return
 }
@@ -481,7 +482,9 @@ func (s *Shim) updateBundle(ctx context.Context,
 	tx := []*store.SetRequestElement{{Operation: store.Operation_PUT, Kvs: kvs}}
 
 	// Invalidate cache entry here to prevent race condition with async watcher
-	s.removeBundleCacheEntry(id)
+	if s.c.bundleCacheInvalidate {
+		s.removeBundleCacheEntry(id)
+	}
 
 	_, err = s.Store.Set(ctx, &store.SetRequest{Elements: tx})
 	if err != nil {
