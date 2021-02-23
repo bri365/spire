@@ -77,8 +77,6 @@ func (s *Shim) CountBundles(ctx context.Context,
 func (s *Shim) CreateBundle(ctx context.Context,
 	req *datastore.CreateBundleRequest) (*datastore.CreateBundleResponse, error) {
 
-	s.Log.Debug("Create bundle")
-
 	if s.Store == nil {
 		return s.DataStore.CreateBundle(ctx, req)
 	}
@@ -90,7 +88,9 @@ func (s *Shim) CreateBundle(ctx context.Context,
 	}
 
 	// build the bundle key and value
-	k := bundleKey(req.Bundle.TrustDomainId)
+	b := req.Bundle
+	fmt.Printf("b %s  %d  %d  %x  %#v", b.TrustDomainId, b.RevisionNumber, b.RefreshHint, b.JwtSigningKeys, b.RootCas)
+	k := bundleKey(b.TrustDomainId)
 	v, err := proto.Marshal(req.Bundle)
 	if err != nil {
 		return nil, err
@@ -111,7 +111,7 @@ func (s *Shim) CreateBundle(ctx context.Context,
 		return nil, err
 	}
 
-	return &datastore.CreateBundleResponse{Bundle: req.Bundle}, nil
+	return &datastore.CreateBundleResponse{Bundle: b}, nil
 }
 
 // DeleteBundle removes the given bundle from the store

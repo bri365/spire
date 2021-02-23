@@ -43,14 +43,13 @@ func (s *Shim) CountAttestedNodes(ctx context.Context,
 func (s *Shim) CreateAttestedNode(ctx context.Context,
 	req *datastore.CreateAttestedNodeRequest) (*datastore.CreateAttestedNodeResponse, error) {
 
-	s.Log.Debug("CN", "req", req)
-
 	if s.Store == nil {
 		return s.DataStore.CreateAttestedNode(ctx, req)
 	}
 
 	// Build the node record key and value
 	n := req.Node
+	fmt.Printf("n %v", n)
 	k := nodeKey(n.SpiffeId)
 	v, err := proto.Marshal(n)
 	if err != nil {
@@ -222,8 +221,6 @@ func (s *Shim) listAttestedNodes(ctx context.Context, revision int64,
 	if req.BySelectorMatch != nil && len(req.BySelectorMatch.Selectors) == 0 {
 		return nil, 0, status.Error(codes.InvalidArgument, "cannot list by empty selectors set")
 	}
-
-	s.Log.Debug("LN", "req", req)
 
 	// If specific rev not requested and we are filtering with one or more indices, get the
 	// current store revision for use in subsequent calls to ensure transactional consistency.

@@ -1,0 +1,9 @@
+#!/bin/bash
+
+# if [ -z "$SUCCESS" ]; then
+#     docker-compose logs
+# fi
+
+docker-compose logs spire-server
+
+# docker-down

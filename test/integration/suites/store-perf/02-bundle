@@ -1,0 +1,7 @@
+#!/bin/bash
+
+# Install openssl
+docker-compose exec -T spire-server apk add --update openssl && rm -rf /var/cache/apk/*
+
+# Verify federated bundle can be created (pem)
+docker-compose exec -T spire-server ash -c "cat /opt/spire/conf/fixture/ca.pem | /opt/spire/bin/spire-server bundle set -id spiffe://federated.td"

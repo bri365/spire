@@ -25,12 +25,11 @@ func (s *Shim) CreateJoinToken(ctx context.Context,
 		return nil, status.Errorf(codes.InvalidArgument, "store-etcd: empty join token")
 	}
 
-	s.Log.Debug("CT", "req", req)
-
 	// Build the entry record key and value
 	// NOTE: since the key is the token, we could save store space
 	// by not including the token again in the value
 	j := req.JoinToken
+	fmt.Printf("t %v", j)
 	k := tokenKey(j.Token)
 	v, err := proto.Marshal(j)
 	if err != nil {
@@ -159,8 +158,6 @@ func (s *Shim) listJoinTokens(ctx context.Context, rev int64,
 	if req.Pagination != nil && req.Pagination.PageSize == 0 {
 		return nil, 0, status.Error(codes.InvalidArgument, "cannot paginate with pagesize = 0")
 	}
-
-	s.Log.Debug("LT", "req", req)
 
 	// Start with all token identifiers and limit of 0 (no limit)
 	key := tokenKey("")

@@ -62,6 +62,7 @@ func (s *Shim) CreateRegistrationEntry(ctx context.Context,
 
 	// Build the entry record key and value
 	e := req.Entry
+	fmt.Printf("e %v", e)
 	k := entryKey(e.EntryId)
 	v, err := proto.Marshal(e)
 	if err != nil {
