@@ -43,6 +43,8 @@ func (s *Shim) CountAttestedNodes(ctx context.Context,
 func (s *Shim) CreateAttestedNode(ctx context.Context,
 	req *datastore.CreateAttestedNodeRequest) (*datastore.CreateAttestedNodeResponse, error) {
 
+	s.Log.Debug("CN", "req", req)
+
 	if s.Store == nil {
 		return s.DataStore.CreateAttestedNode(ctx, req)
 	}
@@ -97,13 +99,15 @@ func (s *Shim) DeleteAttestedNode(ctx context.Context,
 		return s.DataStore.DeleteAttestedNode(ctx, req)
 	}
 
+	s.Log.Debug("DN", "req", req)
+
 	// Get current attested node and version for transactional integrity
 	fn, ver, err := s.fetchNode(ctx, &datastore.FetchAttestedNodeRequest{SpiffeId: req.SpiffeId})
 	if err != nil {
 		return nil, err
 	}
 	if fn.Node == nil {
-		return nil, status.Error(codes.NotFound, "store-etcd: record not found")
+		return nil, status.Error(codes.NotFound, "store-etcd: node not found (DN)")
 	}
 	n := fn.Node
 
@@ -145,6 +149,8 @@ func (s *Shim) FetchAttestedNode(ctx context.Context,
 	if s.Store == nil {
 		return s.DataStore.FetchAttestedNode(ctx, req)
 	}
+
+	s.Log.Debug("FN", "req", req)
 
 	if s.c.nodeCacheFetch {
 		node := s.fetchNodeCacheEntry(req.SpiffeId)
@@ -216,6 +222,8 @@ func (s *Shim) listAttestedNodes(ctx context.Context, revision int64,
 	if req.BySelectorMatch != nil && len(req.BySelectorMatch.Selectors) == 0 {
 		return nil, 0, status.Error(codes.InvalidArgument, "cannot list by empty selectors set")
 	}
+
+	s.Log.Debug("LN", "req", req)
 
 	// If specific rev not requested and we are filtering with one or more indices, get the
 	// current store revision for use in subsequent calls to ensure transactional consistency.
@@ -466,13 +474,15 @@ func (s *Shim) UpdateAttestedNode(ctx context.Context,
 		return s.DataStore.UpdateAttestedNode(ctx, req)
 	}
 
+	s.Log.Debug("UN", "req", req)
+
 	// Get current attested node and version for transactional integrity
 	fn, ver, err := s.fetchNode(ctx, &datastore.FetchAttestedNodeRequest{SpiffeId: req.SpiffeId})
 	if err != nil {
 		return nil, err
 	}
 	if fn.Node == nil {
-		return nil, status.Error(codes.NotFound, "store-etcd: record not found")
+		return nil, status.Error(codes.NotFound, "store-etcd: node not found (UN)")
 	}
 
 	n := fn.Node
@@ -567,13 +577,15 @@ func (s *Shim) GetNodeSelectors(ctx context.Context,
 		return s.DataStore.GetNodeSelectors(ctx, req)
 	}
 
+	s.Log.Debug("GSN", "req", req)
+
 	// get current attested node
 	fn, _, err := s.fetchNode(ctx, &datastore.FetchAttestedNodeRequest{SpiffeId: req.SpiffeId})
 	if err != nil {
 		return nil, err
 	}
 	if fn.Node == nil {
-		return nil, status.Error(codes.NotFound, "store-etcd: record not found")
+		return nil, status.Error(codes.NotFound, "store-etcd: node not found (GNS)")
 	}
 
 	ns := &datastore.NodeSelectors{SpiffeId: req.SpiffeId, Selectors: fn.Node.Selectors}
@@ -587,6 +599,8 @@ func (s *Shim) ListNodeSelectors(ctx context.Context,
 	if s.Store == nil {
 		return s.DataStore.ListNodeSelectors(ctx, req)
 	}
+
+	s.Log.Debug("LSN", "req", req)
 
 	// Start with a reasonable size array to reduce the number of reallocations
 	selectors := make([]*datastore.NodeSelectors, 0, 256)
@@ -616,6 +630,7 @@ func (s *Shim) ListNodeSelectors(ctx context.Context,
 }
 
 // SetNodeSelectors sets node (agent) selectors and deletes index keys for selectors no longer used.
+// NOTE: the node may or may not exist when this is called
 func (s *Shim) SetNodeSelectors(ctx context.Context,
 	req *datastore.SetNodeSelectorsRequest) (*datastore.SetNodeSelectorsResponse, error) {
 
@@ -627,37 +642,53 @@ func (s *Shim) SetNodeSelectors(ctx context.Context,
 		return nil, errors.New("invalid request: missing selectors")
 	}
 
+	s.Log.Debug("SNS", "req", req)
+
 	// get current attested node and version for transactional integrity
 	fn, ver, err := s.fetchNode(ctx, &datastore.FetchAttestedNodeRequest{SpiffeId: req.Selectors.SpiffeId})
 	if err != nil {
 		return nil, err
 	}
 	if fn.Node == nil {
-		return nil, status.Error(codes.NotFound, "store-etcd: record not found")
+		s.Log.Debug("SNS not found", "node", req.Selectors.SpiffeId)
 	}
 	n := fn.Node
 
 	// Build a list of existing index keys to delete any unused ones
 	delKeys := map[string]bool{}
-	if n.Selectors != nil {
+	if n != nil && n.Selectors != nil {
 		for _, sel := range n.Selectors {
 			delKeys[nodeSelKey(n.SpiffeId, sel)] = true
 		}
 	}
 
-	// Build update record for node with new selectors
-	n.Selectors = req.Selectors.Selectors
-	k := nodeKey(n.SpiffeId)
-	v, err := proto.Marshal(n)
-	if err != nil {
-		return nil, err
+	del := []*store.KeyValue{}
+	put := []*store.KeyValue{}
+	tx := []*store.SetRequestElement{}
+
+	// Start with node, if it exists, ensuring version matches the one read above
+	if n != nil {
+		// Build update record for node with new selectors
+		n.Selectors = req.Selectors.Selectors
+		k := nodeKey(n.SpiffeId)
+		v, err := proto.Marshal(n)
+		if err != nil {
+			return nil, err
+		}
+
+		put = append(put, &store.KeyValue{Key: k, Value: v, Version: ver, Compare: store.Compare_EQUALS})
+
+		// Index record for expiry contains node selectors as content to simplify selector listing, so upsert it
+		sel := &datastore.NodeSelectors{SpiffeId: n.SpiffeId, Selectors: n.Selectors}
+		v, err = proto.Marshal(sel)
+		if err != nil {
+			return nil, err
+		}
+		put = append(put, &store.KeyValue{Key: nodeExpKey(n.SpiffeId, n.CertNotAfter), Value: v})
 	}
 
-	// Build kvs list for put operation, starting with node and ensuring version is the same as read above
-	put := []*store.KeyValue{{Key: k, Value: v, Version: ver, Compare: store.Compare_EQUALS}}
-
 	// Add index records for new selectors
-	for _, sel := range n.Selectors {
+	for _, sel := range req.Selectors.Selectors {
 		key := nodeSelKey(n.SpiffeId, sel)
 		put = append(put, &store.KeyValue{Key: key})
 
@@ -667,19 +698,8 @@ func (s *Shim) SetNodeSelectors(ctx context.Context,
 		}
 	}
 
-	// Index record for expiry contains node selectors as content to simplify selector listing, so upsert it
-	sel := &datastore.NodeSelectors{SpiffeId: n.SpiffeId, Selectors: n.Selectors}
-	v, err = proto.Marshal(sel)
-	if err != nil {
-		return nil, err
-	}
-	put = append(put, &store.KeyValue{Key: nodeExpKey(n.SpiffeId, n.CertNotAfter), Value: v})
-
-	tx := []*store.SetRequestElement{}
-
 	if len(delKeys) > 0 {
 		// Delete remaining unused index keys
-		del := []*store.KeyValue{}
 		for k := range delKeys {
 			del = append(del, &store.KeyValue{Key: k})
 		}
@@ -691,8 +711,12 @@ func (s *Shim) SetNodeSelectors(ctx context.Context,
 	// Add put operation for node update and new selectors to transaction
 	tx = append(tx, &store.SetRequestElement{Kvs: put, Operation: store.Operation_PUT})
 
+	s.Log.Debug("SNS", "del", del, "put", put)
+
 	// Invalidate cache entry here to prevent race condition with async watcher
-	s.removeNodeCacheEntry(n.SpiffeId)
+	if n != nil {
+		s.removeNodeCacheEntry(n.SpiffeId)
+	}
 
 	// Submit transaction
 	_, err = s.Store.Set(ctx, &store.SetRequest{Elements: tx})

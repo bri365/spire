@@ -547,7 +547,7 @@ func (s *PluginSuite) TestUpdateRegistrationEntry() {
 	_, err = s.shim.UpdateRegistrationEntry(ctx, &datastore.UpdateRegistrationEntryRequest{
 		Entry: entry,
 	})
-	s.RequireGRPCStatus(err, codes.NotFound, _notFoundErrMsg)
+	s.RequireGRPCStatus(err, codes.NotFound, "store-etcd: entry not found (UE)")
 }
 
 func (s *PluginSuite) TestUpdateRegistrationEntryWithMask() {
@@ -767,7 +767,7 @@ func (s *PluginSuite) TestUpdateRegistrationEntryWithMask() {
 func (s *PluginSuite) TestDeleteRegistrationEntry() {
 	// delete non-existing
 	_, err := s.shim.DeleteRegistrationEntry(ctx, &datastore.DeleteRegistrationEntryRequest{EntryId: "badid"})
-	s.RequireGRPCStatus(err, codes.NotFound, _notFoundErrMsg)
+	s.RequireGRPCStatus(err, codes.NotFound, "store-etcd: entry not found (DE)")
 
 	entry1 := s.createRegistrationEntry(&common.RegistrationEntry{
 		Selectors: []*common.Selector{
@@ -808,7 +808,7 @@ func (s *PluginSuite) TestDeleteRegistrationEntry() {
 
 	// Delete again must fails with Not Found
 	delRes, err = s.shim.DeleteRegistrationEntry(ctx, &datastore.DeleteRegistrationEntryRequest{EntryId: entry1.EntryId})
-	s.Require().EqualError(err, "rpc error: code = NotFound desc = store-etcd: record not found")
+	s.Require().EqualError(err, "rpc error: code = NotFound desc = store-etcd: entry not found (DE)")
 	s.Require().Nil(delRes)
 }
 

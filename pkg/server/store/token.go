@@ -25,6 +25,8 @@ func (s *Shim) CreateJoinToken(ctx context.Context,
 		return nil, status.Errorf(codes.InvalidArgument, "store-etcd: empty join token")
 	}
 
+	s.Log.Debug("CT", "req", req)
+
 	// Build the entry record key and value
 	// NOTE: since the key is the token, we could save store space
 	// by not including the token again in the value
@@ -64,13 +66,15 @@ func (s *Shim) DeleteJoinToken(ctx context.Context,
 		return s.DataStore.DeleteJoinToken(ctx, req)
 	}
 
+	s.Log.Debug("DT", "req", req)
+
 	// Get current join token and version for transactional integrity
 	ft, ver, err := s.fetchToken(ctx, &datastore.FetchJoinTokenRequest{Token: req.Token})
 	if err != nil {
 		return nil, err
 	}
 	if ft.JoinToken == nil {
-		return nil, status.Error(codes.NotFound, "store-etcd: record not found")
+		return nil, status.Error(codes.NotFound, "store-etcd: join token not found (DT)")
 	}
 	j := ft.JoinToken
 
@@ -103,6 +107,8 @@ func (s *Shim) FetchJoinToken(ctx context.Context,
 	if s.Store == nil {
 		return s.DataStore.FetchJoinToken(ctx, req)
 	}
+
+	s.Log.Debug("FT", "req", req)
 
 	token := s.fetchTokenCacheEntry(req.Token)
 	if token != nil {
@@ -153,6 +159,8 @@ func (s *Shim) listJoinTokens(ctx context.Context, rev int64,
 	if req.Pagination != nil && req.Pagination.PageSize == 0 {
 		return nil, 0, status.Error(codes.InvalidArgument, "cannot paginate with pagesize = 0")
 	}
+
+	s.Log.Debug("LT", "req", req)
 
 	// Start with all token identifiers and limit of 0 (no limit)
 	key := tokenKey("")

@@ -13,6 +13,7 @@
 package store
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/andres-erbsen/clock"
@@ -121,6 +122,9 @@ var (
 // New returns an initialized store.
 func New(ds datastore.DataStore, st store.Store, logger hclog.Logger,
 	cfg *Configuration, etcd *clientv3.Client) (*Shim, error) {
+	if cfg == nil {
+		return nil, errors.New("Empty config")
+	}
 	store := &Shim{
 		DataStore: ds,
 		Store:     st,

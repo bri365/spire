@@ -382,7 +382,7 @@ func (s *Shim) fetchNodeCacheEntry(id string) *common.AttestedNode {
 
 // Remove the given attested node from the cache
 func (s *Shim) removeNodeCacheEntry(id string) {
-	if s.c.nodeCacheEnabled && s.c.initialized {
+	if s.c.initialized && s.c.nodeCacheEnabled && s.c.nodeCacheInvalidate {
 		s.c.mu.Lock()
 		delete(s.c.nodes, id)
 		s.removeIndexKey(s.c.nodeIndex, id)

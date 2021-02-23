@@ -100,6 +100,7 @@ func (s *Shim) CreateRegistrationEntry(ctx context.Context,
 
 	// Create index records for individual selectors
 	for _, sel := range e.Selectors {
+		s.Log.Trace("CE TVI", "sel", sel, "eSK", entrySelKey(e.EntryId, sel))
 		put = append(put, &store.KeyValue{Key: entrySelKey(e.EntryId, sel)})
 	}
 
@@ -141,7 +142,7 @@ func (s *Shim) DeleteRegistrationEntry(ctx context.Context,
 		return nil, err
 	}
 	if fe.Entry == nil {
-		return nil, status.Error(codes.NotFound, "store-etcd: record not found")
+		return nil, status.Error(codes.NotFound, "store-etcd: entry not found (DE)")
 	}
 	e := fe.Entry
 
@@ -553,7 +554,7 @@ func (s *Shim) UpdateRegistrationEntry(ctx context.Context,
 		return nil, err
 	}
 	if fe.Entry == nil {
-		return nil, status.Error(codes.NotFound, "store-etcd: record not found")
+		return nil, status.Error(codes.NotFound, "store-etcd: entry not found (UE)")
 	}
 	e := fe.Entry
 	r := req.Entry
@@ -603,7 +604,7 @@ func (s *Shim) UpdateRegistrationEntry(ctx context.Context,
 		}
 
 		// Add index records for new selectors
-		for _, sel := range e.Selectors {
+		for _, sel := range r.Selectors {
 			key := entrySelKey(e.EntryId, sel)
 			put = append(put, &store.KeyValue{Key: key})
 
@@ -673,6 +674,8 @@ func (s *Shim) UpdateRegistrationEntry(ctx context.Context,
 		changed = true
 		e.Ttl = r.Ttl
 	}
+
+	s.Log.Trace("UE", "changed", changed, "del", del, "put", put)
 
 	if !changed {
 		return &datastore.UpdateRegistrationEntryResponse{Entry: e}, nil

@@ -1,4 +1,7 @@
 #!/bin/bash
 
-docker-up spire-server
+cp /Users/brian/Dev/scytale/performance-tests/etcd/tf-etcd-vsphere/certs/ca.pem conf/server/store-ca.pem
+cp /Users/brian/Dev/scytale/performance-tests/etcd/tf-etcd-vsphere/certs/client.pem conf/server/store-client.pem
+cp /Users/brian/Dev/scytale/performance-tests/etcd/tf-etcd-vsphere/certs/client-key.pem conf/server/store-client-key.pem
 
+docker-compose up -d spire-server

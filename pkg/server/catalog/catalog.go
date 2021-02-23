@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/andres-erbsen/clock"
+	"github.com/roguesoftware/etcd/clientv3"
 	"github.com/sirupsen/logrus"
 	"github.com/spiffe/spire/pkg/common/catalog"
 	common_log "github.com/spiffe/spire/pkg/common/log"
@@ -197,15 +198,29 @@ type Repository struct {
 func Load(ctx context.Context, config Config) (*Repository, error) {
 	// Strip out the Store plugin configuration and load the etcd plugin
 	// directly. This allows us to bypass gRPC and get rid of response limits.
+	var stEtcd *clientv3.Client
+	var stCfg *ss.Configuration
+	var stErr error
+	var st *st_etcd.Plugin
 	storeConfig := config.PluginConfig[store.Type]
-	delete(config.PluginConfig, store.Type)
-	st, stErr := loadEtcdStore(ctx, config.Log, storeConfig)
+	if storeConfig != nil {
+		delete(config.PluginConfig, store.Type)
+		st, stErr = loadEtcdStore(ctx, config.Log, storeConfig)
+		if st != nil {
+			stCfg = st.Cfg
+			stEtcd = st.Etcd
+		} else {
+			fmt.Printf("err %v", stErr)
+		}
+	}
 
 	// Strip out the Datastore plugin configuration and load the SQL plugin
 	// directly. This allows us to bypass gRPC and get rid of response limits.
+	var dsErr error
+	var ds *ds_sql.Plugin
 	dataStoreConfig := config.PluginConfig[datastore.Type]
 	delete(config.PluginConfig, datastore.Type)
-	ds, dsErr := loadSQLDataStore(ctx, config.Log, dataStoreConfig)
+	ds, dsErr = loadSQLDataStore(ctx, config.Log, dataStoreConfig)
 
 	if stErr != nil && dsErr != nil {
 		return nil, fmt.Errorf("Error loading both store and datastore; dsErr: %v and stErr: %v", dsErr, stErr)
@@ -236,12 +251,17 @@ func Load(ctx context.Context, config Config) (*Repository, error) {
 
 	// Install the store shim as the datastore plugin, which will use
 	// etcd store if configured or SQL datastore otherwise.
-	ssLogger := common_log.NewHCLogAdapter(config.Log, telemetry.PluginBuiltIn).Named("ss")
-	p.DataStore.DataStore, err = ss.New(ds, st, ssLogger, st.Cfg, st.Etcd)
-	if err != nil {
-		return nil, err
+	if st != nil {
+		ssLogger := common_log.NewHCLogAdapter(config.Log, telemetry.PluginBuiltIn).Named("ss")
+		p.DataStore.DataStore, err = ss.New(ds, st, ssLogger, stCfg, stEtcd)
+		if err != nil {
+			return nil, err
+		}
+		// Add telemetry to datastore
+		p.DataStore.DataStore = datastore_telemetry.WithMetrics(p.DataStore.DataStore, config.Metrics)
+	} else {
+		p.DataStore.DataStore = datastore_telemetry.WithMetrics(ds, config.Metrics)
 	}
-
 	// Add telemetry to datastore
 	p.DataStore.DataStore = datastore_telemetry.WithMetrics(p.DataStore.DataStore, config.Metrics)
 

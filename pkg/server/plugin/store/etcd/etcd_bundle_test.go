@@ -30,12 +30,12 @@ func (s *PluginSuite) TestBundleCRUD() {
 
 	// update non-existent
 	_, err = s.shim.UpdateBundle(ctx, &datastore.UpdateBundleRequest{Bundle: bundle})
-	s.RequireGRPCStatus(err, codes.NotFound, _notFoundErrMsg)
+	s.RequireGRPCStatus(err, codes.NotFound, "store-etcd: bundle not found (UB)")
 
 	// delete non-existent
 	_, err = s.shim.DeleteBundle(ctx, &datastore.DeleteBundleRequest{TrustDomainId: "spiffe://foo"})
 	s.Equal(codes.NotFound, status.Code(err))
-	s.RequireGRPCStatus(err, codes.NotFound, "store-etcd: record not found")
+	s.RequireGRPCStatus(err, codes.NotFound, "store-etcd: bundle not found (DB)")
 
 	// create
 	_, err = s.shim.CreateBundle(ctx, &datastore.CreateBundleRequest{

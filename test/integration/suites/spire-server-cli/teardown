@@ -3,4 +3,5 @@
 if [ -z "$SUCCESS" ]; then
     docker-compose logs
 fi
+
 docker-down

@@ -77,6 +77,8 @@ func (s *Shim) CountBundles(ctx context.Context,
 func (s *Shim) CreateBundle(ctx context.Context,
 	req *datastore.CreateBundleRequest) (*datastore.CreateBundleResponse, error) {
 
+	s.Log.Debug("Create bundle")
+
 	if s.Store == nil {
 		return s.DataStore.CreateBundle(ctx, req)
 	}
@@ -131,7 +133,7 @@ func (s *Shim) DeleteBundle(ctx context.Context,
 		return nil, err
 	}
 	if fb.Bundle == nil {
-		return nil, status.Error(codes.NotFound, "store-etcd: record not found")
+		return nil, status.Error(codes.NotFound, "store-etcd: bundle not found (DB)")
 	}
 	b := fb.Bundle
 
@@ -444,11 +446,11 @@ func (s *Shim) updateBundle(ctx context.Context,
 	}
 
 	if fr.Bundle == nil {
-		return nil, status.Error(codes.NotFound, "store-etcd: record not found")
+		return nil, status.Error(codes.NotFound, "store-etcd: bundle not found (UB)")
 	}
 
 	if ver > 0 && ver != current {
-		return nil, status.Error(codes.Aborted, "store-etcd: version not found")
+		return nil, status.Error(codes.Aborted, "store-etcd: version not found (UB)")
 	}
 
 	m := req.InputMask

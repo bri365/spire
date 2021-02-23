@@ -662,7 +662,7 @@ func (s *PluginSuite) TestUpdateAttestedNode() {
 				CertNotAfter:     updatedExpires,
 			},
 			expCode: codes.NotFound,
-			expMsg:  _notFoundErrMsg,
+			expMsg:  "store-etcd: node not found (UN)",
 		},
 		{
 			name: "update attested node with all false mask",
@@ -770,7 +770,7 @@ func (s *PluginSuite) TestDeleteAttestedNode() {
 
 	// delete it before it exists
 	_, err := s.shim.DeleteAttestedNode(ctx, &datastore.DeleteAttestedNodeRequest{SpiffeId: entry.SpiffeId})
-	s.RequireGRPCStatus(err, codes.NotFound, _notFoundErrMsg)
+	s.RequireGRPCStatus(err, codes.NotFound, "store-etcd: node not found (DN)")
 
 	_, err = s.shim.CreateAttestedNode(ctx, &datastore.CreateAttestedNodeRequest{Node: entry})
 	s.Require().NoError(err)
