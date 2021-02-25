@@ -252,7 +252,7 @@ func Load(ctx context.Context, config Config) (*Repository, error) {
 	// Install the store shim as the datastore plugin, which will use
 	// etcd store if configured or SQL datastore otherwise.
 	if st != nil {
-		ssLogger := common_log.NewHCLogAdapter(config.Log, telemetry.PluginBuiltIn).Named("ss")
+		ssLogger := common_log.NewHCLogAdapter(config.Log, telemetry.PluginBuiltIn).Named("store")
 		p.DataStore.DataStore, err = ss.New(ds, st, ssLogger, stCfg, stEtcd)
 		if err != nil {
 			return nil, err

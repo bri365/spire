@@ -87,13 +87,9 @@ type Cache struct {
 
 // Store cache constants
 const (
-	HeartbeatDefaultInterval = 5
-	TxEotTTL                 = 60
+	TxEotTTL = 60
 
-	hbTTL        = 1
 	loadPageSize = 10000
-	watchUpdate  = 0
-	watchDelete  = 1
 )
 
 // NewCache returns an initialized cache object.
@@ -130,13 +126,14 @@ func NewCache(cfg *Configuration) Cache {
 	}
 }
 
-// Initialize loads cache data and starts the watcher tasks.
+// InitializeCache loads cache data and starts the watcher tasks.
 // Bulk loading is performed on the same store revision.
 // After the initial bulk load, watcher routines are started to
 // continually update the cache as store updates are procesed.
 // NOTE: for faster startup, we could start a go routine to load
 // and validate the cache data.
-func (s *Shim) Initialize() error {
+func (s *Shim) InitializeCache() error {
+	s.Log.Debug("Initializing store cache")
 	// rev is a unique store revision and serves as both the heartbeat ID for this server
 	// as well as the initial cache revision
 	rev, err := s.startHeartbeatService()
@@ -188,6 +185,9 @@ func (s *Shim) Initialize() error {
 
 // loadBundles performs the initial cache load for bundles
 func (s *Shim) loadBundles(rev int64) error {
+	s.Log.Debug("Cache loading bundles", "rev", rev)
+	start := s.clock.Now().UnixNano()
+
 	// Cache is being initialized so it is safe to hold the lock the whole time
 	s.c.mu.Lock()
 	defer s.c.mu.Unlock()
@@ -220,6 +220,8 @@ func (s *Shim) loadBundles(rev int64) error {
 
 	sort.Strings(s.c.bundleIndex.Keys)
 	s.c.bundleIndex.Count = len(s.c.bundleIndex.Keys)
+	deltaMsec := (s.clock.Now().UnixNano() - start) / 1000000
+	s.Log.Info("Loaded bundles", "count", s.c.bundleIndex.Count, "msec", deltaMsec)
 
 	return nil
 }
@@ -256,6 +258,9 @@ func (s *Shim) removeBundleCacheEntry(id string) {
 
 // loadEntries performs the initial cache load for registration entries
 func (s *Shim) loadEntries(rev int64) error {
+	s.Log.Debug("Cache loading registration entries", "rev", rev)
+	start := s.clock.Now().UnixNano()
+
 	// Cache is being initialized so it is safe to hold the lock the whole time
 	s.c.mu.Lock()
 	defer s.c.mu.Unlock()
@@ -288,6 +293,8 @@ func (s *Shim) loadEntries(rev int64) error {
 
 	sort.Strings(s.c.entryIndex.Keys)
 	s.c.entryIndex.Count = len(s.c.entryIndex.Keys)
+	deltaMsec := (s.clock.Now().UnixNano() - start) / 1000000
+	s.Log.Info("Loaded entries", "count", s.c.entryIndex.Count, "msec", deltaMsec)
 
 	return nil
 }
@@ -324,6 +331,9 @@ func (s *Shim) removeEntryCacheEntry(id string) {
 
 // loadNodes performs the initial cache load for attested nodes.
 func (s *Shim) loadNodes(rev int64) error {
+	s.Log.Debug("Cache loading attested nodes", "rev", rev)
+	start := s.clock.Now().UnixNano()
+
 	// Cache is being initialized so it is safe to hold the lock the whole time
 	s.c.mu.Lock()
 	defer s.c.mu.Unlock()
@@ -356,6 +366,8 @@ func (s *Shim) loadNodes(rev int64) error {
 
 	sort.Strings(s.c.nodeIndex.Keys)
 	s.c.nodeIndex.Count = len(s.c.nodeIndex.Keys)
+	deltaMsec := (s.clock.Now().UnixNano() - start) / 1000000
+	s.Log.Info("Loaded nodes", "count", s.c.nodeIndex.Count, "msec", deltaMsec)
 
 	return nil
 }
@@ -392,6 +404,9 @@ func (s *Shim) removeNodeCacheEntry(id string) {
 
 // loadTokens performs the initial cache load for join tokens.
 func (s *Shim) loadTokens(rev int64) error {
+	s.Log.Debug("Cache loading join tokens", "rev", rev)
+	start := s.clock.Now().UnixNano()
+
 	// Cache is being initialized so it is safe to hold the lock the whole time
 	s.c.mu.Lock()
 	defer s.c.mu.Unlock()
@@ -424,6 +439,8 @@ func (s *Shim) loadTokens(rev int64) error {
 
 	sort.Strings(s.c.tokenIndex.Keys)
 	s.c.tokenIndex.Count = len(s.c.tokenIndex.Keys)
+	deltaMsec := (s.clock.Now().UnixNano() - start) / 1000000
+	s.Log.Info("Loaded tokens", "count", s.c.tokenIndex.Count, "msec", deltaMsec)
 
 	return nil
 }
@@ -481,6 +498,7 @@ func (s *Shim) watchBundles(rev int64) error {
 
 		if w.IsProgressNotify() {
 			s.Log.Info("No bundle updates for 10 minutes")
+			// TODO reset timeout counter
 			continue
 		}
 
@@ -541,6 +559,7 @@ func (s *Shim) watchEntries(rev int64) error {
 
 		if w.IsProgressNotify() {
 			s.Log.Info("No entry updates for 10 minutes")
+			// TODO reset timeout counter
 			continue
 		}
 
@@ -601,6 +620,7 @@ func (s *Shim) watchNodes(rev int64) error {
 
 		if w.IsProgressNotify() {
 			s.Log.Info("No node updates for 10 minutes")
+			// TODO reset timeout counter
 			continue
 		}
 
@@ -661,6 +681,7 @@ func (s *Shim) watchTokens(rev int64) error {
 
 		if w.IsProgressNotify() {
 			s.Log.Info("No join token updates for 10 minutes")
+			// TODO reset timeout counter
 			continue
 		}
 

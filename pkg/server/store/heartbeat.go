@@ -18,6 +18,20 @@ import (
 // latency from database write to async watch update across all servers over time.
 // TODO use heartbeat data to modulate write response delay to improve inter-server cache coherency.
 
+// Store cache constants
+const (
+	HeartbeatDefaultInterval = 5
+
+	hbTTL = 1
+)
+
+var (
+	hbCount       int64
+	hbAvgRespUsec int64
+	hbMinRespUsec int64 = 9999999
+	hbMaxRespUsec int64
+)
+
 // startHeartbeatService initializes server heartbeat monitoring.
 func (s *Shim) startHeartbeatService() (int64, error) {
 	// Secure a unique store revision with an empty heartbeat
@@ -28,11 +42,11 @@ func (s *Shim) startHeartbeatService() (int64, error) {
 	}
 
 	if s.c.heartbeatInterval == 0 {
-		// s.Log.Warn("Heartbeat disabled")
+		s.Log.Warn("Heartbeat disabled")
 		return rev, nil
 	}
 
-	s.Log.Info("Heartbeat: starting", "id", rev)
+	s.Log.Info("Heartbeat starting", "id", rev)
 	go s.hbReply(context.TODO(), rev+1)
 	go s.hbSend(rev + 1)
 
@@ -79,18 +93,31 @@ func (s *Shim) hbReply(ctx context.Context, rev int64) {
 				continue
 			}
 			originator, responder, ts := s.parseHB(e)
-			delta := float64(s.clock.Now().UnixNano()-ts) / 1000000.0
+			deltaUsec := (s.clock.Now().UnixNano() - ts) / 1000
 			if originator == id {
 				if responder == "" {
-					s.Log.Info(fmt.Sprintf("self heartbeat in %.2fms", delta))
+					s.Log.Debug(fmt.Sprintf("self heartbeat in %d Usec", deltaUsec))
 				} else {
-					s.Log.Info(fmt.Sprintf("reply heartbeat from %s in %.2fms", responder, delta))
+					s.Log.Debug(fmt.Sprintf("reply heartbeat from %s in %d Usec", responder, deltaUsec))
+					hbAvgRespUsec = (hbCount*hbAvgRespUsec + deltaUsec*1000) / (hbCount + 1)
+					if deltaUsec < hbMinRespUsec {
+						hbMinRespUsec = deltaUsec
+						s.Log.Info("HB msec", "min", float64(deltaUsec/1000.0))
+					}
+					if deltaUsec > hbMaxRespUsec {
+						hbMaxRespUsec = deltaUsec
+						s.Log.Info("HB msec", "max", float64(deltaUsec/1000.0))
+					}
+					if deltaUsec-hbAvgRespUsec > 10000 {
+						// latency more than 10 milliseconds over average
+						s.Log.Info("HB latency", "msec", float64(deltaUsec/1000.0), "avg", hbAvgRespUsec)
+					}
 				}
 			} else if originator != "" && responder == "" {
 				// reply to foreign heartbeat
 				_, err := s.sendHB(ctx, originator, id, ts)
 				if err != nil {
-					s.Log.Error("Heartbeat: error sending reply", "originator", originator, "error", err)
+					s.Log.Error("Heartbeat error sending reply", "originator", originator, "error", err)
 				}
 			}
 		}
@@ -102,7 +129,7 @@ func (s *Shim) hbReply(ctx context.Context, rev int64) {
 func (s *Shim) sendHB(ctx context.Context, orig, resp string, ts int64) (int64, error) {
 	lease, err := s.Etcd.Grant(ctx, hbTTL)
 	if err != nil {
-		s.Log.Error("Heartbeat: failed to acquire lease", "error", err)
+		s.Log.Error("Heartbeat failed to acquire lease", "error", err)
 		return 0, err
 	}
 
@@ -120,7 +147,7 @@ func (s *Shim) sendHB(ctx context.Context, orig, resp string, ts int64) (int64, 
 func (s *Shim) parseHB(hb *clientv3.Event) (string, string, int64) {
 	ts, err := strconv.ParseInt(string(hb.Kv.Value), 10, 64)
 	if err != nil {
-		s.Log.Error("Heartbeat: invalid payload", "value", string(hb.Kv.Value), "key", hb.Kv.Key)
+		s.Log.Error("Heartbeat invalid payload", "value", string(hb.Kv.Value), "key", hb.Kv.Key)
 		return "", "", 0
 	}
 
@@ -133,7 +160,7 @@ func (s *Shim) parseHB(hb *clientv3.Event) (string, string, int64) {
 		return items[1], items[2], ts
 	}
 
-	s.Log.Error("Heartbeat: invalid key", "key", string(hb.Kv.Key))
+	s.Log.Error("Heartbeat invalid key", "key", string(hb.Kv.Key))
 
 	return "", "", 0
 }

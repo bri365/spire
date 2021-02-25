@@ -13,7 +13,6 @@ import (
 
 	"github.com/spiffe/go-spiffe/v2/spiffeid"
 	common_log "github.com/spiffe/spire/pkg/common/log"
-	"github.com/spiffe/spire/pkg/common/telemetry"
 	"github.com/stretchr/testify/require"
 
 	"github.com/spiffe/spire/pkg/server/plugin/datastore"
@@ -115,7 +114,7 @@ func (s *PluginSuite) SetupTest() {
 	var err error
 	s.T().Log("SetupTest")
 	log, _ := common_log.NewLogger()
-	ssLogger := common_log.NewHCLogAdapter(log, telemetry.PluginBuiltIn).Named("shim")
+	ssLogger := common_log.NewHCLogAdapter(log, "shim")
 	s.st = s.newPlugin()
 	cfg := &ss.Configuration{}
 	s.shim, err = ss.New(nil, s.st, ssLogger, cfg, s.etcdPlugin.Etcd)

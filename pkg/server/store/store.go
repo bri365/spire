@@ -134,7 +134,7 @@ func New(ds datastore.DataStore, st store.Store, logger hclog.Logger,
 		cfg:       cfg,
 		clock:     clock.New(),
 	}
-	if err := store.Initialize(); err != nil {
+	if err := store.InitializeCache(); err != nil {
 		return nil, err
 	}
 	return store, nil

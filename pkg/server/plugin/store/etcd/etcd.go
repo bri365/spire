@@ -5,7 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io/ioutil"
+	"os"
 	"sync"
 	"time"
 
@@ -131,8 +131,6 @@ func (cfg *configuration) Validate() error {
 
 // Configure parses HCL config into config struct, opens etcd connection, and initializes the cache.
 func (st *Plugin) Configure(ctx context.Context, req *spi.ConfigureRequest) (*spi.ConfigureResponse, error) {
-	st.log.Info("Configuring etcd store")
-
 	cfg := &configuration{}
 	if err := hcl.Decode(cfg, req.Configuration); err != nil {
 		return nil, err
@@ -204,8 +202,8 @@ func (st *Plugin) Configure(ctx context.Context, req *spi.ConfigureRequest) (*sp
 
 	// TODO set proper logging for etcd client
 	// NOTE: etcd client is noisy
-	// clientv3.SetLogger(grpclog.NewLoggerV2(os.Stdout, os.Stdout, os.Stdout))
-	clientv3.SetLogger(grpclog.NewLoggerV2(ioutil.Discard, ioutil.Discard, ioutil.Discard))
+	clientv3.SetLogger(grpclog.NewLoggerV2(os.Stdout, os.Stdout, os.Stdout))
+	// clientv3.SetLogger(grpclog.NewLoggerV2(ioutil.Discard, ioutil.Discard, ioutil.Discard))
 
 	st.mu.Lock()
 	defer st.mu.Unlock()
@@ -213,6 +211,8 @@ func (st *Plugin) Configure(ctx context.Context, req *spi.ConfigureRequest) (*sp
 	if err := st.openConnection(cfg, false); err != nil {
 		return nil, err
 	}
+
+	st.log.Info("Configured etcd store", "endpoints", cfg.Endpoints)
 
 	return &spi.ConfigureResponse{}, nil
 }
@@ -231,6 +231,7 @@ func (st *Plugin) openConnection(cfg *configuration, isReadOnly bool) error {
 		return err
 	}
 
+	st.log.Debug("Open etcd connection", "timeout", dialTimeout)
 	st.Etcd, err = clientv3.New(clientv3.Config{
 		Endpoints:   cfg.Endpoints,
 		DialTimeout: dialTimeout,
