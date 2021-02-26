@@ -62,7 +62,6 @@ func (s *Shim) CreateRegistrationEntry(ctx context.Context,
 
 	// Build the entry record key and value
 	e := req.Entry
-	fmt.Printf("e %v", e)
 	k := entryKey(e.EntryId)
 	v, err := proto.Marshal(e)
 	if err != nil {
@@ -600,7 +599,7 @@ func (s *Shim) UpdateRegistrationEntry(ctx context.Context,
 		delKeys := map[string]bool{}
 		if e.Selectors != nil {
 			for _, sel := range e.Selectors {
-				delKeys[nodeSelKey(e.EntryId, sel)] = true
+				delKeys[NodeSelKey(e.EntryId, sel)] = true
 			}
 		}
 

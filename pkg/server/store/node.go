@@ -28,7 +28,7 @@ func (s *Shim) CountAttestedNodes(ctx context.Context,
 	}
 
 	// Set range to all node keys
-	key := nodeKey("")
+	key := NodeKey("")
 	end := AllNodes
 
 	res, err := s.Store.Get(ctx, &store.GetRequest{Key: key, End: end, CountOnly: true})
@@ -49,8 +49,7 @@ func (s *Shim) CreateAttestedNode(ctx context.Context,
 
 	// Build the node record key and value
 	n := req.Node
-	fmt.Printf("n %v", n)
-	k := nodeKey(n.SpiffeId)
+	k := NodeKey(n.SpiffeId)
 	v, err := proto.Marshal(n)
 	if err != nil {
 		// Return gRPC InvalidArgument error?
@@ -61,8 +60,8 @@ func (s *Shim) CreateAttestedNode(ctx context.Context,
 	put := []*store.KeyValue{{Key: k, Value: v, Compare: store.Compare_NOT_PRESENT}}
 
 	// Create empty index records for attestation type and banned
-	put = append(put, &store.KeyValue{Key: nodeAdtKey(n.SpiffeId, n.AttestationDataType)})
-	put = append(put, &store.KeyValue{Key: nodeBanKey(n.SpiffeId, n.CertSerialNumber)})
+	put = append(put, &store.KeyValue{Key: NodeAdtKey(n.SpiffeId, n.AttestationDataType)})
+	put = append(put, &store.KeyValue{Key: NodeBanKey(n.SpiffeId, n.CertSerialNumber)})
 
 	// Create index record for expiry with node selectors as content to simplify selector listing
 	sel := &datastore.NodeSelectors{SpiffeId: n.SpiffeId, Selectors: n.Selectors}
@@ -70,11 +69,11 @@ func (s *Shim) CreateAttestedNode(ctx context.Context,
 	if err != nil {
 		return nil, err
 	}
-	put = append(put, &store.KeyValue{Key: nodeExpKey(n.SpiffeId, n.CertNotAfter), Value: v})
+	put = append(put, &store.KeyValue{Key: NodeExpKey(n.SpiffeId, n.CertNotAfter), Value: v})
 
 	// Create index records for individual selectors
 	for _, sel := range n.Selectors {
-		put = append(put, &store.KeyValue{Key: nodeSelKey(n.SpiffeId, sel)})
+		put = append(put, &store.KeyValue{Key: NodeSelKey(n.SpiffeId, sel)})
 	}
 
 	// One put operation for this transaction
@@ -113,16 +112,16 @@ func (s *Shim) DeleteAttestedNode(ctx context.Context,
 	// Build a list of delete operations to be performed as a transaction,
 	// starting with the node at the version read above. The entire transaction
 	// will fail if this record has been changed since the node was fetched.
-	del := []*store.KeyValue{{Key: nodeKey(n.SpiffeId), Version: ver, Compare: store.Compare_EQUALS}}
+	del := []*store.KeyValue{{Key: NodeKey(n.SpiffeId), Version: ver, Compare: store.Compare_EQUALS}}
 
 	// Add index records for expiry, banned, and attestation type (any version)
-	del = append(del, &store.KeyValue{Key: nodeExpKey(n.SpiffeId, n.CertNotAfter)})
-	del = append(del, &store.KeyValue{Key: nodeBanKey(n.SpiffeId, n.CertSerialNumber)})
-	del = append(del, &store.KeyValue{Key: nodeAdtKey(n.SpiffeId, n.AttestationDataType)})
+	del = append(del, &store.KeyValue{Key: NodeExpKey(n.SpiffeId, n.CertNotAfter)})
+	del = append(del, &store.KeyValue{Key: NodeBanKey(n.SpiffeId, n.CertSerialNumber)})
+	del = append(del, &store.KeyValue{Key: NodeAdtKey(n.SpiffeId, n.AttestationDataType)})
 
 	// Add index records for selectors
 	for _, sel := range n.Selectors {
-		del = append(del, &store.KeyValue{Key: nodeSelKey(n.SpiffeId, sel)})
+		del = append(del, &store.KeyValue{Key: NodeSelKey(n.SpiffeId, sel)})
 	}
 
 	// One delete operation for all keys in the transaction
@@ -175,7 +174,7 @@ func (s *Shim) FetchAttestedNode(ctx context.Context,
 func (s *Shim) fetchNode(ctx context.Context,
 	req *datastore.FetchAttestedNodeRequest) (*datastore.FetchAttestedNodeResponse, int64, error) {
 
-	res, err := s.Store.Get(ctx, &store.GetRequest{Key: nodeKey(req.SpiffeId)})
+	res, err := s.Store.Get(ctx, &store.GetRequest{Key: NodeKey(req.SpiffeId)})
 	if err != nil {
 		return nil, 0, err
 	}
@@ -304,7 +303,7 @@ func (s *Shim) listAttestedNodes(ctx context.Context, revision int64,
 		}
 	}
 
-	key := nodeKey("")
+	key := NodeKey("")
 	var limit int64
 
 	p := req.Pagination
@@ -335,7 +334,7 @@ func (s *Shim) listAttestedNodes(ctx context.Context, revision int64,
 		var i int64 = 1
 		for _, id := range ids {
 			// Ignore entries from previous pages
-			if p != nil && len(p.Token) > 0 && nodeKey(id) < key {
+			if p != nil && len(p.Token) > 0 && NodeKey(id) < key {
 				continue
 			}
 
@@ -357,7 +356,7 @@ func (s *Shim) listAttestedNodes(ctx context.Context, revision int64,
 				// NOTE: looping one at a time will not scale to desired limits
 				// Reads should be batched in transactions
 				// Batches would be PageSize if paginated or a few hundred to a thousand at a time
-				res, err := s.Store.Get(ctx, &store.GetRequest{Key: nodeKey(id), Revision: rev})
+				res, err := s.Store.Get(ctx, &store.GetRequest{Key: NodeKey(id), Revision: rev})
 				if err != nil {
 					return nil, 0, err
 				}
@@ -385,7 +384,7 @@ func (s *Shim) listAttestedNodes(ctx context.Context, revision int64,
 			}
 
 			resp.Nodes = append(resp.Nodes, n)
-			lastKey = nodeKey(n.SpiffeId)
+			lastKey = NodeKey(n.SpiffeId)
 
 			// If paginated, have we reached the page limit?
 			if limit > 0 && i == limit {
@@ -416,11 +415,14 @@ func (s *Shim) listAttestedNodes(ctx context.Context, revision int64,
 
 		// Pagination requested or cache does not support the requested rev
 		// TODO pagination support requires a sorted array of IDs be maintained with the cache entries.
+		a := s.clock.Now().UnixNano()
 		res, err := s.Store.Get(ctx, &store.GetRequest{Key: key, End: AllNodes, Limit: limit, Revision: rev})
 		if err != nil {
 			return nil, 0, err
 		}
 
+		b := s.clock.Now().UnixNano()
+		s.Log.Debug("listNodes Get", "key", key, "count", len(res.Kvs), "total", res.Total, "msec", (b-a)/1000000)
 		for _, kv := range res.Kvs {
 			n := &common.AttestedNode{}
 			err = proto.Unmarshal(kv.Value, n)
@@ -434,6 +436,7 @@ func (s *Shim) listAttestedNodes(ctx context.Context, revision int64,
 			resp.Nodes = append(resp.Nodes, n)
 			lastKey = kv.Key
 		}
+		s.Log.Debug("listNodes for", "lastKey", lastKey, "msec", (s.clock.Now().UnixNano()-b)/1000000)
 	}
 
 	if p != nil {
@@ -501,16 +504,16 @@ func (s *Shim) UpdateAttestedNode(ctx context.Context,
 			return nil, err
 		}
 
-		del = append(del, &store.KeyValue{Key: nodeExpKey(n.SpiffeId, n.CertNotAfter)})
-		put = append(put, &store.KeyValue{Key: nodeExpKey(n.SpiffeId, req.CertNotAfter), Value: v})
+		del = append(del, &store.KeyValue{Key: NodeExpKey(n.SpiffeId, n.CertNotAfter)})
+		put = append(put, &store.KeyValue{Key: NodeExpKey(n.SpiffeId, req.CertNotAfter), Value: v})
 		n.CertNotAfter = req.CertNotAfter
 		changed = true
 	}
 
 	if req.InputMask.CertSerialNumber {
 		// Delete existing index key if different from new one
-		oldKey := nodeBanKey(n.SpiffeId, n.CertSerialNumber)
-		newKey := nodeBanKey(n.SpiffeId, req.CertSerialNumber)
+		oldKey := NodeBanKey(n.SpiffeId, n.CertSerialNumber)
+		newKey := NodeBanKey(n.SpiffeId, req.CertSerialNumber)
 		if newKey != oldKey {
 			del = append(del, &store.KeyValue{Key: oldKey})
 			put = append(put, &store.KeyValue{Key: newKey})
@@ -536,7 +539,7 @@ func (s *Shim) UpdateAttestedNode(ctx context.Context,
 	}
 
 	// Build updated node KeyValue
-	k := nodeKey(n.SpiffeId)
+	k := NodeKey(n.SpiffeId)
 	v, err := proto.Marshal(n)
 	if err != nil {
 		return nil, err
@@ -574,7 +577,7 @@ func (s *Shim) GetNodeSelectors(ctx context.Context,
 		return s.DataStore.GetNodeSelectors(ctx, req)
 	}
 
-	s.Log.Debug("GSN", "req", req)
+	s.Log.Debug("GNS", "req", req)
 
 	// get current attested node
 	fn, _, err := s.fetchNode(ctx, &datastore.FetchAttestedNodeRequest{SpiffeId: req.SpiffeId})
@@ -597,7 +600,7 @@ func (s *Shim) ListNodeSelectors(ctx context.Context,
 		return s.DataStore.ListNodeSelectors(ctx, req)
 	}
 
-	s.Log.Debug("LSN", "req", req)
+	s.Log.Debug("LNS", "req", req)
 
 	// Start with a reasonable size array to reduce the number of reallocations
 	selectors := make([]*datastore.NodeSelectors, 0, 256)
@@ -606,7 +609,7 @@ func (s *Shim) ListNodeSelectors(ctx context.Context,
 	key := nodeExpPrefix
 	end := nodeExpAll
 	if req.ValidAt != nil {
-		key = nodeExpKey("", req.ValidAt.Seconds)
+		key = NodeExpKey("", req.ValidAt.Seconds)
 	}
 
 	res, err := s.Store.Get(ctx, &store.GetRequest{Key: key, End: end})
@@ -655,7 +658,7 @@ func (s *Shim) SetNodeSelectors(ctx context.Context,
 	delKeys := map[string]bool{}
 	if n != nil && n.Selectors != nil {
 		for _, sel := range n.Selectors {
-			delKeys[nodeSelKey(n.SpiffeId, sel)] = true
+			delKeys[NodeSelKey(n.SpiffeId, sel)] = true
 		}
 	}
 
@@ -667,7 +670,7 @@ func (s *Shim) SetNodeSelectors(ctx context.Context,
 	if n != nil {
 		// Build update record for node with new selectors
 		n.Selectors = req.Selectors.Selectors
-		k := nodeKey(n.SpiffeId)
+		k := NodeKey(n.SpiffeId)
 		v, err := proto.Marshal(n)
 		if err != nil {
 			return nil, err
@@ -681,12 +684,12 @@ func (s *Shim) SetNodeSelectors(ctx context.Context,
 		if err != nil {
 			return nil, err
 		}
-		put = append(put, &store.KeyValue{Key: nodeExpKey(n.SpiffeId, n.CertNotAfter), Value: v})
+		put = append(put, &store.KeyValue{Key: NodeExpKey(n.SpiffeId, n.CertNotAfter), Value: v})
 	}
 
 	// Add index records for new selectors
 	for _, sel := range req.Selectors.Selectors {
-		key := nodeSelKey(n.SpiffeId, sel)
+		key := NodeSelKey(n.SpiffeId, sel)
 		put = append(put, &store.KeyValue{Key: key})
 
 		// Remove this key from the delete list as we are changing it
@@ -733,9 +736,9 @@ func IsNodeKey(key string) bool {
 	return false
 }
 
-// nodeKey returns a string formatted key for an attested node.
+// NodeKey returns a string formatted key for an attested node.
 // e.g. "N|spiffie://example.com/clusterA/nodeN"
-func nodeKey(id string) string {
+func NodeKey(id string) string {
 	return fmt.Sprintf("%s%s", NodePrefix, id)
 }
 
@@ -748,9 +751,9 @@ func nodeIDFromKey(key string) (string, error) {
 	return items[1], nil
 }
 
-// nodeAdtKey returns a string formatted key for an attested node indexed by attestation data type.
+// NodeAdtKey returns a string formatted key for an attested node indexed by attestation data type.
 // e.g. "NI|ADT|aws-tag|spiffie://example.com/clusterA/nodeN"
-func nodeAdtKey(id, adt string) string {
+func NodeAdtKey(id, adt string) string {
 	return fmt.Sprintf("%s%s%s%s%s%s", nodeIndex, ADT, Delim, adt, Delim, id)
 }
 
@@ -788,9 +791,9 @@ func (s *Shim) nodeAdtMap(ctx context.Context, rev int64, adt string) (map[strin
 	return ids, nil
 }
 
-// nodeBanKey returns a string formatted key for an attested node indexed by banned status.
+// NodeBanKey returns a string formatted key for an attested node indexed by banned status.
 // e.g. "NI|BAN|0|spiffie://example.com/clusterA/nodeN"
-func nodeBanKey(id, csn string) string {
+func NodeBanKey(id, csn string) string {
 	banned := 0
 	if csn == "" {
 		banned = 1
@@ -835,10 +838,10 @@ func (s *Shim) nodeBanMap(ctx context.Context, rev int64, ban bool) (map[string]
 	return ids, nil
 }
 
-// nodeExpKey returns a string formatted key for an attested node indexed by expiry in seconds.
+// NodeExpKey returns a string formatted key for an attested node indexed by expiry in seconds.
 // e.g. "NI|EXP|1611907252|spiffie://example.com/clusterA/nodeN"
 // NOTE: %d without leading zeroes for time.Unix will work for the next ~250 years
-func nodeExpKey(id string, exp int64) string {
+func NodeExpKey(id string, exp int64) string {
 	return fmt.Sprintf("%s%s%s%d%s%s", nodeIndex, EXP, Delim, exp, Delim, id)
 }
 
@@ -882,9 +885,9 @@ func (s *Shim) nodeExpMap(ctx context.Context, rev, exp int64, after bool) (map[
 	return ids, nil
 }
 
-// nodeSelKey returns a string formatted key for an attested node indexed by selector type and value.
+// NodeSelKey returns a string formatted key for an attested node indexed by selector type and value.
 // e.g. "NI|TVI|a-type|a-value|spiffie://example.com/clusterA/nodeN"
-func nodeSelKey(id string, s *common.Selector) string {
+func NodeSelKey(id string, s *common.Selector) string {
 	return fmt.Sprintf("%s%s%s%s%s%s%s%s", nodeIndex, TVI, Delim, s.Type, Delim, s.Value, Delim, id)
 }
 

@@ -29,7 +29,6 @@ func (s *Shim) CreateJoinToken(ctx context.Context,
 	// NOTE: since the key is the token, we could save store space
 	// by not including the token again in the value
 	j := req.JoinToken
-	fmt.Printf("t %v", j)
 	k := tokenKey(j.Token)
 	v, err := proto.Marshal(j)
 	if err != nil {

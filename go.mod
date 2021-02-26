@@ -55,6 +55,7 @@ require (
 	github.com/shirou/gopsutil v2.18.12+incompatible
 	github.com/shirou/w32 v0.0.0-20160930032740-bb4de0191aa4 // indirect
 	github.com/sirupsen/logrus v1.4.2
+	github.com/spf13/cobra v0.0.5
 	github.com/spiffe/go-spiffe/v2 v2.0.0-beta.4
 	github.com/spiffe/spire/proto/spire v0.10.1
 	github.com/stretchr/testify v1.7.0
@@ -72,6 +73,7 @@ require (
 	google.golang.org/grpc v1.33.2
 	google.golang.org/protobuf v1.25.0
 	gopkg.in/DATA-DOG/go-sqlmock.v1 v1.3.0 // indirect
+	gopkg.in/cheggaaa/pb.v1 v1.0.25
 	gopkg.in/square/go-jose.v2 v2.4.1
 	gopkg.in/tomb.v2 v2.0.0-20161208151619-d5d1b5820637
 	gotest.tools v2.2.0+incompatible

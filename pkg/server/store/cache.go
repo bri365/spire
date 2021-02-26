@@ -87,9 +87,9 @@ type Cache struct {
 
 // Store cache constants
 const (
-	TxEotTTL = 60
+	TxEotTTL = 5
 
-	loadPageSize = 10000
+	loadPageSize = 100000
 )
 
 // NewCache returns an initialized cache object.
@@ -126,7 +126,7 @@ func NewCache(cfg *Configuration) Cache {
 	}
 }
 
-// InitializeCache loads cache data and starts the watcher tasks.
+// InitializeCache loads cache data from the store and starts watcher tasks.
 // Bulk loading is performed on the same store revision.
 // After the initial bulk load, watcher routines are started to
 // continually update the cache as store updates are procesed.
@@ -134,11 +134,10 @@ func NewCache(cfg *Configuration) Cache {
 // and validate the cache data.
 func (s *Shim) InitializeCache() error {
 	s.Log.Debug("Initializing store cache")
-	// rev is a unique store revision and serves as both the heartbeat ID for this server
-	// as well as the initial cache revision
-	rev, err := s.startHeartbeatService()
+	// Get the current store revision for consistent cache loading
+	rev, err := s.getStoreRevision(context.TODO())
 	if err != nil {
-		return err
+		return fmt.Errorf("Cache: error getting initial revision %v", err)
 	}
 
 	if s.c.bundleCacheEnabled {
@@ -178,6 +177,11 @@ func (s *Shim) InitializeCache() error {
 	s.c.storeRevision = rev
 	s.c.mu.Unlock()
 
+	_, err = s.startHeartbeatService()
+	if err != nil {
+		return err
+	}
+
 	// TODO handle exit conditions from the watch routines?
 
 	return nil
@@ -194,14 +198,10 @@ func (s *Shim) loadBundles(rev int64) error {
 
 	token := ""
 	for {
-		br, r, err := s.listBundles(context.TODO(), rev, &datastore.ListBundlesRequest{
+		br, _, err := s.listBundles(context.TODO(), rev, &datastore.ListBundlesRequest{
 			Pagination: &datastore.Pagination{Token: token, PageSize: loadPageSize}})
 		if err != nil {
 			return err
-		}
-
-		if r != rev {
-			return fmt.Errorf("LB revision returned (%d) does not match requested (%d)", r, rev)
 		}
 
 		for _, b := range br.Bundles {
@@ -267,14 +267,10 @@ func (s *Shim) loadEntries(rev int64) error {
 
 	token := ""
 	for {
-		er, r, err := s.listRegistrationEntries(context.TODO(), rev, &datastore.ListRegistrationEntriesRequest{
+		er, _, err := s.listRegistrationEntries(context.TODO(), rev, &datastore.ListRegistrationEntriesRequest{
 			Pagination: &datastore.Pagination{Token: token, PageSize: loadPageSize}})
 		if err != nil {
 			return err
-		}
-
-		if r != rev {
-			return fmt.Errorf("Cache LE revision returned (%d) does not match requested (%d)", r, rev)
 		}
 
 		for _, e := range er.Entries {
@@ -340,14 +336,10 @@ func (s *Shim) loadNodes(rev int64) error {
 
 	token := ""
 	for {
-		nr, r, err := s.listAttestedNodes(context.TODO(), rev, &datastore.ListAttestedNodesRequest{
+		nr, _, err := s.listAttestedNodes(context.TODO(), rev, &datastore.ListAttestedNodesRequest{
 			Pagination: &datastore.Pagination{Token: token, PageSize: loadPageSize}})
 		if err != nil {
 			return err
-		}
-
-		if r != rev {
-			return fmt.Errorf("LN revision returned (%d) does not match requested (%d)", r, rev)
 		}
 
 		for _, n := range nr.Nodes {
@@ -357,7 +349,8 @@ func (s *Shim) loadNodes(rev int64) error {
 
 		count := len(nr.Nodes)
 		token = nr.Pagination.Token
-		s.Log.Debug("Cache LN", "count", count, "token", token)
+		deltaMsec := (s.clock.Now().UnixNano() - start) / 1000000
+		s.Log.Debug("Cache LN", "count", count, "token", token, "msec", deltaMsec)
 
 		if count < loadPageSize {
 			break
@@ -413,14 +406,10 @@ func (s *Shim) loadTokens(rev int64) error {
 
 	token := ""
 	for {
-		tr, r, err := s.listJoinTokens(context.TODO(), rev, &datastore.ListJoinTokensRequest{
+		tr, _, err := s.listJoinTokens(context.TODO(), rev, &datastore.ListJoinTokensRequest{
 			Pagination: &datastore.Pagination{Token: token, PageSize: loadPageSize}})
 		if err != nil {
 			return err
-		}
-
-		if r != rev {
-			return fmt.Errorf("LT revision returned (%d) does not match requested (%d)", r, rev)
 		}
 
 		for _, t := range tr.JoinTokens {

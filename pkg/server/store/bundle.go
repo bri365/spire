@@ -89,7 +89,6 @@ func (s *Shim) CreateBundle(ctx context.Context,
 
 	// build the bundle key and value
 	b := req.Bundle
-	fmt.Printf("b %s  %d  %d  %x  %#v", b.TrustDomainId, b.RevisionNumber, b.RefreshHint, b.JwtSigningKeys, b.RootCas)
 	k := bundleKey(b.TrustDomainId)
 	v, err := proto.Marshal(req.Bundle)
 	if err != nil {

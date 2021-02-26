@@ -22,7 +22,7 @@ import (
 const (
 	HeartbeatDefaultInterval = 5
 
-	hbTTL = 1
+	hbTTL = 5
 )
 
 var (
