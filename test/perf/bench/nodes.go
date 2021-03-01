@@ -8,6 +8,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/roguesoftware/etcd/clientv3"
 	"github.com/spf13/cobra"
 	"github.com/spiffe/spire/pkg/server/plugin/datastore"
 	"github.com/spiffe/spire/pkg/server/store"
@@ -46,8 +47,8 @@ func nodeFunc(cmd *cobra.Command, args []string) {
 	// Seed math.rand with cryptographically random number and loads word file
 	randInit()
 
-	// Node paths will contain three parts; get the cube root for counting and add one for
-	// additional SPIFFE IDs as parallel operations don't always divide equally into the total
+	// Node paths contain three parts; get cube root for count and add one for
+	// additional SPIFFE IDs as parallel operations may not divide equally into total
 	count := int(math.Ceil(math.Cbrt(float64(total)))) + 1
 
 	// Get two distinctly unique word lists to build random node names
@@ -65,7 +66,6 @@ func nodeFunc(cmd *cobra.Command, args []string) {
 			}
 		}
 	}
-	fmt.Printf("%d SpiffeIDs\n", len(spiffeIds))
 
 	// Get the requested number of client connections
 	clients := mustCreateClients(totalClients, totalConns)
@@ -91,7 +91,7 @@ func nodeFunc(cmd *cobra.Command, args []string) {
 			c := &etcdClient{c: clients[clientNumber]}
 			sids := spiffeIds[count*clientNumber : count*(clientNumber+1)]
 			for j := 0; j < count; j++ {
-				_, err := c.createNode(sids[j], createIndices)
+				err := c.createNode(sids[j], createIndices)
 				if !ok(err) {
 					return
 				}
@@ -117,10 +117,12 @@ func nodeFunc(cmd *cobra.Command, args []string) {
 	if progress {
 		bar.Finish()
 	}
-	fmt.Printf("%d nodes written in %.3f sec\n", totalNodes, (float64(finish)-float64(start))/1000000000.0)
+
+	delta := (float64(finish) - float64(start)) / 1000000000.0
+	fmt.Printf("%d nodes written in %.3f sec (%.3f ops/sec)\n", totalNodes, delta, float64(totalNodes)/delta)
 }
 
-func (ec *etcdClient) createNode(sid string, idx bool) (*common.AttestedNode, error) {
+func (ec *etcdClient) createNode(sid string, idx bool) error {
 	selectors := []*common.Selector{
 		{Type: randString(10), Value: randString(32)},
 		{Type: randString(10), Value: randString(32)},
@@ -141,48 +143,34 @@ func (ec *etcdClient) createNode(sid string, idx bool) (*common.AttestedNode, er
 	k := store.NodeKey(n.SpiffeId)
 	v, err := proto.Marshal(n)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	_, err = ec.c.Put(context.Background(), k, string(v))
-	if err != nil {
-		return nil, err
-	}
+	ops := []clientv3.Op{}
+	ops = append(ops, clientv3.OpPut(k, string(v)))
 
-	if !idx {
-		return n, nil
-	}
+	// Add index keys if requested
+	if idx {
+		ops = append(ops, clientv3.OpPut(store.NodeAdtKey(n.SpiffeId, n.AttestationDataType), ""))
+		ops = append(ops, clientv3.OpPut(store.NodeBanKey(n.SpiffeId, n.CertSerialNumber), ""))
 
-	k = store.NodeAdtKey(n.SpiffeId, n.AttestationDataType)
-	_, err = ec.c.Put(context.Background(), k, "")
-	if err != nil {
-		return nil, err
-	}
-
-	k = store.NodeBanKey(n.SpiffeId, n.CertSerialNumber)
-	_, err = ec.c.Put(context.Background(), k, "")
-	if err != nil {
-		return nil, err
-	}
-
-	sel := &datastore.NodeSelectors{SpiffeId: n.SpiffeId, Selectors: n.Selectors}
-	v, err = proto.Marshal(sel)
-	if err != nil {
-		return nil, err
-	}
-	k = store.NodeExpKey(n.SpiffeId, n.CertNotAfter)
-	_, err = ec.c.Put(context.Background(), k, string(v))
-	if err != nil {
-		return nil, err
-	}
-
-	for _, sel := range n.Selectors {
-		k = store.NodeSelKey(n.SpiffeId, sel)
-		_, err = ec.c.Put(context.Background(), k, string(v))
+		sel := &datastore.NodeSelectors{SpiffeId: n.SpiffeId, Selectors: n.Selectors}
+		v, err = proto.Marshal(sel)
 		if err != nil {
-			return nil, err
+			return err
+		}
+		ops = append(ops, clientv3.OpPut(store.NodeExpKey(n.SpiffeId, n.CertNotAfter), string(v)))
+
+		for _, sel := range n.Selectors {
+			ops = append(ops, clientv3.OpPut(store.NodeSelKey(n.SpiffeId, sel), ""))
 		}
 	}
 
-	return n, nil
+	// Send the transaction to the etcd cluster
+	_, err = ec.c.Txn(context.TODO()).Then(ops...).Commit()
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
