@@ -2,7 +2,6 @@ package main
 
 import (
 	"bufio"
-	"context"
 	crypto_rand "crypto/rand"
 	"encoding/binary"
 	"fmt"
@@ -10,6 +9,7 @@ import (
 	math_rand "math/rand"
 	"os"
 
+	"github.com/gofrs/uuid"
 	"github.com/roguesoftware/etcd/clientv3"
 	"google.golang.org/grpc/grpclog"
 )
@@ -19,12 +19,10 @@ type etcdClient struct {
 }
 
 const (
-	chars                 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
-	domainLength          = 3
-	hostComponentMaxCount = 5
-	hostComponentMaxSize  = 40
-	pathComponentMaxCount = 8
-	pathComponentMaxSize  = 50
+	chars    = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+	hex      = "0123456789abcdef"
+	lowerNum = "0123456789abcdefghijklmnopqrstuvwxyz"
+	numbers  = "0123456789"
 )
 
 var (
@@ -34,9 +32,6 @@ var (
 
 	// leaderEps is a cache for holding endpoints of a leader node
 	leaderEps []string
-
-	tds   = []string{}
-	words = []string{}
 )
 
 func ok(err error) bool {
@@ -50,30 +45,27 @@ func ok(err error) bool {
 	return false
 }
 
-func mustFindLeaderEndpoints(c *clientv3.Client) {
-	resp, lerr := c.MemberList(context.TODO())
-	if lerr != nil {
-		fmt.Fprintf(os.Stderr, "failed to get a member list: %s\n", lerr)
-		os.Exit(1)
+// Seed math/rand for improved randomness
+func initRand() {
+	var b [8]byte
+	_, err := crypto_rand.Read(b[:])
+	if err != nil {
+		panic("cannot seed math/rand with crypto/rand")
+	}
+	math_rand.Seed(int64(binary.LittleEndian.Uint64(b[:])))
+}
+
+func mustCreateClients(totalClients, totalConns uint) []*clientv3.Client {
+	conns := make([]*clientv3.Client, totalConns)
+	for i := range conns {
+		conns[i] = mustCreateConn()
 	}
 
-	leaderID := uint64(0)
-	for _, ep := range c.Endpoints() {
-		if sresp, serr := c.Status(context.TODO(), ep); serr == nil {
-			leaderID = sresp.Leader
-			break
-		}
+	clients := make([]*clientv3.Client, totalClients)
+	for i := range clients {
+		clients[i] = conns[i%int(totalConns)]
 	}
-
-	for _, m := range resp.Members {
-		if m.ID == leaderID {
-			leaderEps = m.ClientURLs
-			return
-		}
-	}
-
-	fmt.Fprintf(os.Stderr, "failed to find a leader endpoint\n")
-	os.Exit(1)
+	return clients
 }
 
 func mustCreateConn() *clientv3.Client {
@@ -106,114 +98,65 @@ func mustCreateConn() *clientv3.Client {
 	return client
 }
 
-func mustCreateClients(totalClients, totalConns uint) []*clientv3.Client {
-	conns := make([]*clientv3.Client, totalConns)
-	for i := range conns {
-		conns[i] = mustCreateConn()
-	}
-
-	clients := make([]*clientv3.Client, totalClients)
-	for i := range clients {
-		clients[i] = conns[i%int(totalConns)]
-	}
-	return clients
-}
-
-func mustRandBytes(n int) []byte {
-	rb := make([]byte, n)
-	_, err := crypto_rand.Read(rb)
+func mustLoad(name string) []string {
+	f, err := os.Open(name)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to generate value: %v\n", err)
+		fmt.Printf("Error opening file %q\n", name)
 		os.Exit(1)
 	}
-	return rb
-}
 
-func randInit() {
-	// Seed math/rand for improved randomness
-	var b [8]byte
-	_, err := crypto_rand.Read(b[:])
-	if err != nil {
-		panic("cannot seed math/rand with crypto/rand")
-	}
-	math_rand.Seed(int64(binary.LittleEndian.Uint64(b[:])))
-
-	// Get domain names
-	f, err := os.Open("tds.txt")
-	if err != nil {
-		panic("Error opening domain file")
-	}
-
+	lines := []string{}
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
-		tds = append(tds, scanner.Text())
+		lines = append(lines, scanner.Text())
 	}
 
 	if err := scanner.Err(); err != nil {
-		panic("Error reading domain file")
+		fmt.Printf("Error reading file %q\n", name)
+		os.Exit(1)
 	}
 
-	// Get common words for host names and paths
-	f, err = os.Open("words.txt")
-	if err != nil {
-		panic("Error opening word file")
-	}
-
-	scanner = bufio.NewScanner(f)
-	for scanner.Scan() {
-		words = append(words, scanner.Text())
-	}
-
-	if err := scanner.Err(); err != nil {
-		panic("Error reading word file")
-	}
+	return lines
 }
 
-func randString(length int) string {
+func mustRandomFileStrings(name string, count int) []string {
+	strings := mustLoad(name)
+	if len(strings) < count {
+		fmt.Printf("Insufficient strings %d < %d\n", len(strings), count)
+		os.Exit(1)
+	}
+
+	// get a set of unique strings from file results
+	// NOTE: as requested count approaches file size, efficiency decreases
+	stringSet := map[string]struct{}{}
+	for {
+		stringSet[strings[math_rand.Intn(len(strings))]] = struct{}{}
+		if len(stringSet) == count {
+			break
+		}
+	}
+
+	stringList := []string{}
+	for k := range stringSet {
+		stringList = append(stringList, k)
+	}
+
+	return stringList
+}
+
+func mustUUID() string {
+	u, err := uuid.NewV4()
+	if err != nil {
+		fmt.Printf("Error generating UUID: %v", err)
+		os.Exit(1)
+	}
+	return u.String()
+}
+
+func randString(chars string, length int) string {
 	s := ""
 	for i := 0; i < length; i++ {
 		s = fmt.Sprintf("%s%c", s, chars[rand.Intn(len(chars))])
 	}
 	return s
-}
-
-func randPath(pathPartCount int) string {
-	path := ""
-	if pathPartCount > 0 && pathPartCount <= pathComponentMaxCount {
-		path = fmt.Sprintf("/%s", words[math_rand.Intn(len(words))])
-		for i := 1; i < pathPartCount; i++ {
-			path = fmt.Sprintf("%s/%s", path, words[math_rand.Intn(len(words))])
-		}
-	}
-
-	return path
-}
-
-func getThreeWordLists(n int) (a, b, c []string) {
-	a = []string{}
-	b = []string{}
-	c = []string{}
-	if n < 1 {
-		return
-	}
-
-	// get a set of unique words
-	wordSet := map[string]struct{}{}
-	for {
-		wordSet[words[math_rand.Intn(len(words))]] = struct{}{}
-		if len(wordSet) > 3*n {
-			break
-		}
-	}
-
-	wordList := []string{}
-	for k := range wordSet {
-		wordList = append(wordList, k)
-	}
-
-	a = wordList[0:n]
-	b = wordList[n : n*2]
-	c = wordList[n*2 : n*3]
-
-	return
 }

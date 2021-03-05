@@ -33,6 +33,7 @@ var (
 	wg  sync.WaitGroup
 
 	all          bool
+	debug        bool
 	progress     bool
 	show         bool
 	total        int
@@ -51,4 +52,6 @@ func init() {
 
 	rootCmd.PersistentFlags().UintVar(&totalConns, "conns", 1, "Total number of gRPC connections")
 	rootCmd.PersistentFlags().UintVar(&totalClients, "clients", 1, "Total number of gRPC clients")
+
+	rootCmd.PersistentFlags().BoolVar(&debug, "debug", false, "output debug messages")
 }

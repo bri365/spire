@@ -27,7 +27,7 @@ func (s *Shim) CountRegistrationEntries(ctx context.Context,
 	}
 
 	// Set range to all entry keys
-	key := entryKey("")
+	key := EntryKey("")
 	end := AllEntries
 
 	res, err := s.Store.Get(ctx, &store.GetRequest{Key: key, End: end, CountOnly: true})
@@ -62,7 +62,7 @@ func (s *Shim) CreateRegistrationEntry(ctx context.Context,
 
 	// Build the entry record key and value
 	e := req.Entry
-	k := entryKey(e.EntryId)
+	k := EntryKey(e.EntryId)
 	v, err := proto.Marshal(e)
 	if err != nil {
 		// Return gRPC InvalidArgument error?
@@ -76,8 +76,8 @@ func (s *Shim) CreateRegistrationEntry(ctx context.Context,
 	put := []*store.KeyValue{{Key: k, Value: v, Compare: store.Compare_NOT_PRESENT}}
 
 	// Create empty index records for parent ID and SPIFFE ID
-	put = append(put, &store.KeyValue{Key: entryPidKey(e.EntryId, e.ParentId)})
-	put = append(put, &store.KeyValue{Key: entrySidKey(e.EntryId, e.SpiffeId)})
+	put = append(put, &store.KeyValue{Key: EntryPidKey(e.EntryId, e.ParentId)})
+	put = append(put, &store.KeyValue{Key: EntrySidKey(e.EntryId, e.SpiffeId)})
 
 	// Create index record for expiry with selectors as content to simplify listing by selector
 	// NOTE: NodeSelectors works here as SpiffeId and EntryId are both strings
@@ -86,7 +86,7 @@ func (s *Shim) CreateRegistrationEntry(ctx context.Context,
 	if err != nil {
 		return nil, err
 	}
-	put = append(put, &store.KeyValue{Key: entryExpKey(e.EntryId, e.EntryExpiry), Value: v})
+	put = append(put, &store.KeyValue{Key: EntryExpKey(e.EntryId, e.EntryExpiry), Value: v})
 
 	// Create index records for federation by bundle domain
 	for _, domain := range e.FederatesWith {
@@ -100,8 +100,8 @@ func (s *Shim) CreateRegistrationEntry(ctx context.Context,
 
 	// Create index records for individual selectors
 	for _, sel := range e.Selectors {
-		s.Log.Trace("CE TVI", "sel", sel, "eSK", entrySelKey(e.EntryId, sel))
-		put = append(put, &store.KeyValue{Key: entrySelKey(e.EntryId, sel)})
+		s.Log.Trace("CE TVI", "sel", sel, "eSK", EntrySelKey(e.EntryId, sel))
+		put = append(put, &store.KeyValue{Key: EntrySelKey(e.EntryId, sel)})
 	}
 
 	// One put operation for this transaction
@@ -149,12 +149,12 @@ func (s *Shim) DeleteRegistrationEntry(ctx context.Context,
 	// Build a list of delete operations to be performed as a transaction,
 	// starting with the entry at the version read above. The entire transaction
 	// will fail if this record has been changed since the entry was fetched.
-	del := []*store.KeyValue{{Key: entryKey(e.EntryId), Version: ver, Compare: store.Compare_EQUALS}}
+	del := []*store.KeyValue{{Key: EntryKey(e.EntryId), Version: ver, Compare: store.Compare_EQUALS}}
 
 	// Add index records for expiry, parent ID, and SPIFFE ID (any version)
-	del = append(del, &store.KeyValue{Key: entryExpKey(e.EntryId, e.EntryExpiry)})
-	del = append(del, &store.KeyValue{Key: entryPidKey(e.EntryId, e.ParentId)})
-	del = append(del, &store.KeyValue{Key: entrySidKey(e.EntryId, e.SpiffeId)})
+	del = append(del, &store.KeyValue{Key: EntryExpKey(e.EntryId, e.EntryExpiry)})
+	del = append(del, &store.KeyValue{Key: EntryPidKey(e.EntryId, e.ParentId)})
+	del = append(del, &store.KeyValue{Key: EntrySidKey(e.EntryId, e.SpiffeId)})
 
 	// Add index records for federation by bundle domain
 	for _, domain := range e.FederatesWith {
@@ -163,7 +163,7 @@ func (s *Shim) DeleteRegistrationEntry(ctx context.Context,
 
 	// Add index records for selectors
 	for _, sel := range e.Selectors {
-		del = append(del, &store.KeyValue{Key: entrySelKey(e.EntryId, sel)})
+		del = append(del, &store.KeyValue{Key: EntrySelKey(e.EntryId, sel)})
 	}
 
 	// One delete operation for all keys in the transaction
@@ -208,7 +208,7 @@ func (s *Shim) FetchRegistrationEntry(ctx context.Context,
 func (s *Shim) fetchEntry(ctx context.Context,
 	req *datastore.FetchRegistrationEntryRequest) (*datastore.FetchRegistrationEntryResponse, int64, error) {
 
-	res, err := s.Store.Get(ctx, &store.GetRequest{Key: entryKey(req.EntryId)})
+	res, err := s.Store.Get(ctx, &store.GetRequest{Key: EntryKey(req.EntryId)})
 	if err != nil {
 		return nil, 0, err
 	}
@@ -354,7 +354,7 @@ func (s *Shim) listRegistrationEntries(ctx context.Context, revision int64,
 		}
 	}
 
-	key := entryKey(" ")
+	key := EntryKey(" ")
 	var limit int64
 
 	p := req.Pagination
@@ -382,7 +382,7 @@ func (s *Shim) listRegistrationEntries(ctx context.Context, revision int64,
 		var i int64 = 1
 		for _, id := range ids {
 			// Ignore entries from previous pages
-			if p != nil && len(p.Token) > 0 && entryKey(id) < key {
+			if p != nil && len(p.Token) > 0 && EntryKey(id) < key {
 				continue
 			}
 
@@ -404,7 +404,7 @@ func (s *Shim) listRegistrationEntries(ctx context.Context, revision int64,
 				// NOTE: looping one at a time will not scale to desired limits
 				// Reads should be batched in transactions
 				// Batches would be PageSize if paginated or a few hundred to a thousand at a time
-				res, err := s.Store.Get(ctx, &store.GetRequest{Key: entryKey(id), Revision: rev})
+				res, err := s.Store.Get(ctx, &store.GetRequest{Key: EntryKey(id), Revision: rev})
 				if err != nil {
 					return nil, 0, err
 				}
@@ -429,7 +429,7 @@ func (s *Shim) listRegistrationEntries(ctx context.Context, revision int64,
 			}
 
 			resp.Entries = append(resp.Entries, e)
-			lastKey = entryKey(e.EntryId)
+			lastKey = EntryKey(e.EntryId)
 
 			// If paginated, have we reached the page limit?
 			if limit > 0 && i == limit {
@@ -460,7 +460,7 @@ func (s *Shim) listRegistrationEntries(ctx context.Context, revision int64,
 				if p != nil {
 					p.Token = ""
 					if len(resp.Entries) > 0 {
-						p.Token = entryKey(lastKey)
+						p.Token = EntryKey(lastKey)
 					}
 					resp.Pagination = p
 				}
@@ -566,15 +566,15 @@ func (s *Shim) UpdateRegistrationEntry(ctx context.Context,
 
 	// If values changed then update entry and index keys
 	if (req.Mask == nil || req.Mask.SpiffeId) && e.SpiffeId != r.SpiffeId {
-		del = append(del, &store.KeyValue{Key: entrySidKey(e.EntryId, e.SpiffeId)})
-		put = append(put, &store.KeyValue{Key: entrySidKey(e.EntryId, r.SpiffeId)})
+		del = append(del, &store.KeyValue{Key: EntrySidKey(e.EntryId, e.SpiffeId)})
+		put = append(put, &store.KeyValue{Key: EntrySidKey(e.EntryId, r.SpiffeId)})
 		e.SpiffeId = r.SpiffeId
 		changed = true
 	}
 
 	if (req.Mask == nil || req.Mask.ParentId) && e.ParentId != r.ParentId {
-		del = append(del, &store.KeyValue{Key: entryPidKey(e.EntryId, e.ParentId)})
-		put = append(put, &store.KeyValue{Key: entryPidKey(e.EntryId, r.ParentId)})
+		del = append(del, &store.KeyValue{Key: EntryPidKey(e.EntryId, e.ParentId)})
+		put = append(put, &store.KeyValue{Key: EntryPidKey(e.EntryId, r.ParentId)})
 		e.ParentId = r.ParentId
 		changed = true
 	}
@@ -588,8 +588,8 @@ func (s *Shim) UpdateRegistrationEntry(ctx context.Context,
 			return nil, err
 		}
 
-		del = append(del, &store.KeyValue{Key: entryExpKey(e.EntryId, e.EntryExpiry)})
-		put = append(put, &store.KeyValue{Key: entryExpKey(e.EntryId, r.EntryExpiry), Value: v})
+		del = append(del, &store.KeyValue{Key: EntryExpKey(e.EntryId, e.EntryExpiry)})
+		put = append(put, &store.KeyValue{Key: EntryExpKey(e.EntryId, r.EntryExpiry), Value: v})
 		e.EntryExpiry = r.EntryExpiry
 		changed = true
 	}
@@ -605,7 +605,7 @@ func (s *Shim) UpdateRegistrationEntry(ctx context.Context,
 
 		// Add index records for new selectors
 		for _, sel := range r.Selectors {
-			key := entrySelKey(e.EntryId, sel)
+			key := EntrySelKey(e.EntryId, sel)
 			put = append(put, &store.KeyValue{Key: key})
 
 			// No need to delete the key if we are changing it
@@ -621,7 +621,7 @@ func (s *Shim) UpdateRegistrationEntry(ctx context.Context,
 			}
 		}
 
-		put = append(put, &store.KeyValue{Key: entryExpKey(e.EntryId, e.EntryExpiry)})
+		put = append(put, &store.KeyValue{Key: EntryExpKey(e.EntryId, e.EntryExpiry)})
 		e.Selectors = r.Selectors
 		changed = true
 	}
@@ -686,7 +686,7 @@ func (s *Shim) UpdateRegistrationEntry(ctx context.Context,
 	e.RevisionNumber++
 
 	// Build the entry record key and value
-	k := entryKey(e.EntryId)
+	k := EntryKey(e.EntryId)
 	v, err := proto.Marshal(e)
 	if err != nil {
 		// Return gRPC InvalidArgument error?
@@ -787,8 +787,8 @@ func IsEntryKey(key string) bool {
 	return false
 }
 
-// entryKey returns a string formatted key for a registered entry
-func entryKey(id string) string {
+// EntryKey returns a string formatted key for a registered entry
+func EntryKey(id string) string {
 	// e.g. "E|5fee2e4a-1fe3-4bf3-b4f0-55eaf268c12a"
 	return fmt.Sprintf("%s%s", EntryPrefix, id)
 }
@@ -802,10 +802,10 @@ func entryIDFromKey(key string) (string, error) {
 	return items[1], nil
 }
 
-// entryExpKey returns a string formatted key for a registered entry indexed by expiry in seconds.
+// EntryExpKey returns a string formatted key for a registered entry indexed by expiry in seconds.
 // e.g. "EI|EXP|1611907252|5fee2e4a-1fe3-4bf3-b4f0-55eaf268c12a"
 // NOTE: %d without leading zeroes for time.Unix will work for the next ~250 years
-func entryExpKey(id string, exp int64) string {
+func EntryExpKey(id string, exp int64) string {
 	return fmt.Sprintf("%s%s%s%d%s%s", entryIndex, EXP, Delim, exp, Delim, id)
 }
 
@@ -893,9 +893,9 @@ func (s *Shim) entryFedByDomainSet(ctx context.Context, rev int64, domain string
 	return ids, nil
 }
 
-// entryPidKey returns a string formatted key for a registered entry indexed by expiry in seconds.
+// EntryPidKey returns a string formatted key for a registered entry indexed by expiry in seconds.
 // e.g. "EI|PID|01242e4a-4563-4bf3-b000-12345678c12a|5fee2e4a-1fe3-4bf3-b4f0-55eaf268c12a"
-func entryPidKey(id, pid string) string {
+func EntryPidKey(id, pid string) string {
 	return fmt.Sprintf("%s%s%s%s%s%s", entryIndex, PID, Delim, pid, Delim, id)
 }
 
@@ -932,9 +932,9 @@ func (s *Shim) entryPidSet(ctx context.Context, rev int64, pid string) (map[stri
 	return ids, nil
 }
 
-// entrySidKey returns a string formatted key for a registered entry indexed by expiry in seconds.
+// EntrySidKey returns a string formatted key for a registered entry indexed by expiry in seconds.
 // e.g. "EI|SID|01242e4a-4563-4bf3-b000-12345678c12a|5fee2e4a-1fe3-4bf3-b4f0-55eaf268c12a"
-func entrySidKey(id, sid string) string {
+func EntrySidKey(id, sid string) string {
 	return fmt.Sprintf("%s%s%s%s%s%s", entryIndex, SID, Delim, sid, Delim, id)
 }
 
@@ -971,9 +971,9 @@ func (s *Shim) entrySidSet(ctx context.Context, rev int64, sid string) (map[stri
 	return ids, nil
 }
 
-// entrySelKey returns a string formatted key for a registered entry indexed by selector type and value.
+// EntrySelKey returns a string formatted key for a registered entry indexed by selector type and value.
 // e.g. "EI|TVI|a-type|a-value|5fee2e4a-1fe3-4bf3-b4f0-55eaf268c12a"
-func entrySelKey(id string, s *common.Selector) string {
+func EntrySelKey(id string, s *common.Selector) string {
 	return fmt.Sprintf("%s%s%s%s%s%s%s%s", entryIndex, TVI, Delim, s.Type, Delim, s.Value, Delim, id)
 }
 
