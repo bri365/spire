@@ -58,12 +58,14 @@ var createCmd = &cobra.Command{
 }
 
 var (
-	createIndices bool
-	random        bool
+	createHostgroups bool
+	createIndices    bool
+	random           bool
 
 	certNotAfter    int64
 	newCertNotAfter int64
 	totalNodes      int
+	totalWorkloads  int
 
 	certSerialNumber    string
 	newCertSerialNumber string
@@ -88,6 +90,8 @@ func init() {
 	createCmd.Flags().StringVar(&clusterFile, "cluster-file", "clusters.txt", "filename for cluster names")
 	createCmd.Flags().StringVar(&regionFile, "region-file", "regions.txt", "filename for region names")
 	createCmd.Flags().IntVar(&totalNodes, "nodes", 100, "number of attested nodes to create")
+	createCmd.Flags().IntVar(&totalWorkloads, "workloads", 100, "number of workloads to create")
+	createCmd.Flags().BoolVar(&createHostgroups, "host-groups", false, "create a host group entry per node")
 	createCmd.Flags().BoolVar(&createIndices, "index", false, "create node index entries")
 	createCmd.Flags().BoolVar(&progress, "progress", false, "show progress bar")
 	createCmd.Flags().BoolVar(&random, "random", false, "seed math/rand with crypto/rand")
@@ -150,86 +154,126 @@ func createFunc(cmd *cobra.Command, args []string) {
 	// Create federated bundles
 
 	// Create lists of hostgroup entries
-	// 1 per region, 1 for architecture per region, 1 for gpu per region
 	allEntries := createHostgroupEntries()
 
 	// Create lists of agent entries for each hostgroup
 
 	// Create lists of workload entries for each hostgroup
+	allEntries = append(allEntries, createWorkloadEntries()...)
 
 	// Store the entries
 	storeEntries(clients, allEntries)
 }
 
-// createHostgroupEntries
+// createWorkloadEntries() {}
+func createWorkloadEntries() []*common.RegistrationEntry {
+	entries := []*common.RegistrationEntry{}
+	for i := 0; i < totalWorkloads; i++ {
+		region := regions[rand.Intn(len(regions))]
+		entry := &common.RegistrationEntry{
+			EntryId:  mustUUID(),
+			SpiffeId: fmt.Sprintf("spiffe://%s/%s/workload%d", trustDomain, region, i),
+			Selectors: []*common.Selector{
+				{Type: "ns", Value: randString(lowerNum, 12)},
+				{Type: "app", Value: randString(lowerNum, 12)},
+			},
+		}
+		switch rand.Intn(5) {
+		case 4:
+			arch := archValues[rand.Intn(len(archValues))]
+			entry.ParentId = fmt.Sprintf("spiffe://%s/%s/%s", trustDomain, region, arch)
+		case 3:
+			gpu := gpuValues[rand.Intn(len(gpuValues))]
+			entry.ParentId = fmt.Sprintf("spiffe://%s/%s/%s", trustDomain, region, gpu)
+		default:
+			entry.ParentId = fmt.Sprintf("spiffe://%s/%s", trustDomain, region)
+		}
+		entries = append(entries, entry)
+	}
+
+	return entries
+}
+
+// createHostgroupEntries - 1 per region, 1 per architecture type per region, 1 per gpu type per region
 func createHostgroupEntries() []*common.RegistrationEntry {
 	entries := []*common.RegistrationEntry{}
 	start := time.Now().UnixNano()
 
 	for region, nodes := range nodesByRegion {
+		// Host group
 		entries = append(entries, &common.RegistrationEntry{
-			EntryId:   mustUUID(),
-			SpiffeId:  fmt.Sprintf("spiffe://%s/%s", trustDomain, region),
-			ParentId:  fmt.Sprintf("spiffe://%s/spire/server", trustDomain),
-			Selectors: []*common.Selector{{Type: "not", Value: "relevant"}},
+			EntryId:  mustUUID(),
+			SpiffeId: fmt.Sprintf("spiffe://%s/%s", trustDomain, region),
+			ParentId: fmt.Sprintf("spiffe://%s/spire/server", trustDomain),
+			Selectors: []*common.Selector{
+				{Type: "k8s_psat:agent_node_label", Value: fmt.Sprintf("region:%s", region)},
+			},
 		})
 
-		for _, n := range nodes {
-			cluster := selectorValue(n.Selectors, "k8s_psat:cluster")
-			uid := selectorValue(n.Selectors, "k8s_psat:agent_node_uid")
-			entries = append(entries, &common.RegistrationEntry{
-				EntryId:   mustUUID(),
-				SpiffeId:  fmt.Sprintf("spiffe://%s/%s/%s", trustDomain, cluster, uid),
-				ParentId:  fmt.Sprintf("spiffe://%s/%s", trustDomain, region),
-				Selectors: []*common.Selector{{Type: "k8s_psat:agent_node_uid", Value: uid}},
-				DnsNames:  []string{selectorValue(n.Selectors, "k8s_psat:agent_node_name")},
-			})
+		if createHostgroups {
+			// Create a separate host group entry per host with agent UID as the selector
+			for _, n := range nodes {
+				cluster := selectorValue(n.Selectors, "k8s_psat:cluster")
+				uid := selectorValue(n.Selectors, "k8s_psat:agent_node_uid")
+				entries = append(entries, &common.RegistrationEntry{
+					EntryId:   mustUUID(),
+					SpiffeId:  fmt.Sprintf("spiffe://%s/%s", trustDomain, cluster),
+					ParentId:  fmt.Sprintf("spiffe://%s/spire/server", trustDomain),
+					Selectors: []*common.Selector{{Type: "k8s_psat:agent_node_uid", Value: uid}},
+				})
+			}
 		}
 	}
 
 	for region, arches := range archByRegion {
-		for arch, nodes := range arches {
+		for arch := range arches {
 			entries = append(entries, &common.RegistrationEntry{
-				EntryId:   mustUUID(),
-				SpiffeId:  fmt.Sprintf("spiffe://%s/%s/%s", trustDomain, region, arch),
-				ParentId:  fmt.Sprintf("spiffe://%s/spire/server", trustDomain),
-				Selectors: []*common.Selector{{Type: "not", Value: "relevant"}},
+				EntryId:  mustUUID(),
+				SpiffeId: fmt.Sprintf("spiffe://%s/%s/%s", trustDomain, region, arch),
+				ParentId: fmt.Sprintf("spiffe://%s/spire/server", trustDomain),
+				Selectors: []*common.Selector{
+					{Type: "k8s_psat:agent_node_label", Value: fmt.Sprintf("region:%s", region)},
+					{Type: "k8s_psat:agent_node_label", Value: fmt.Sprintf("arch:%s", arch)},
+				},
 			})
 
-			for _, n := range nodes {
-				cluster := selectorValue(n.Selectors, "k8s_psat:cluster")
-				uid := selectorValue(n.Selectors, "k8s_psat:agent_node_uid")
-				entries = append(entries, &common.RegistrationEntry{
-					EntryId:   mustUUID(),
-					SpiffeId:  fmt.Sprintf("spiffe://%s/%s/%s", trustDomain, cluster, uid),
-					ParentId:  fmt.Sprintf("spiffe://%s/%s/%s", trustDomain, region, arch),
-					Selectors: []*common.Selector{{Type: "k8s_psat:agent_node_uid", Value: uid}},
-					DnsNames:  []string{selectorValue(n.Selectors, "k8s_psat:agent_node_name")},
-				})
-			}
+			// for _, n := range nodes {
+			// 	cluster := selectorValue(n.Selectors, "k8s_psat:cluster")
+			// 	uid := selectorValue(n.Selectors, "k8s_psat:agent_node_uid")
+			// 	entries = append(entries, &common.RegistrationEntry{
+			// 		EntryId:   mustUUID(),
+			// 		SpiffeId:  fmt.Sprintf("spiffe://%s/%s/%s", trustDomain, cluster, uid),
+			// 		ParentId:  fmt.Sprintf("spiffe://%s/%s/%s", trustDomain, region, arch),
+			// 		Selectors: []*common.Selector{{Type: "k8s_psat:agent_node_uid", Value: uid}},
+			// 		DnsNames:  []string{selectorValue(n.Selectors, "k8s_psat:agent_node_name")},
+			// 	})
+			// }
 		}
 	}
 
 	for region, gpus := range gpuByRegion {
-		for gpu, nodes := range gpus {
+		for gpu := range gpus {
 			entries = append(entries, &common.RegistrationEntry{
-				EntryId:   mustUUID(),
-				SpiffeId:  fmt.Sprintf("spiffe://%s/%s/%s", trustDomain, region, gpu),
-				ParentId:  fmt.Sprintf("spiffe://%s/spire/server", trustDomain),
-				Selectors: []*common.Selector{{Type: "not", Value: "relevant"}},
+				EntryId:  mustUUID(),
+				SpiffeId: fmt.Sprintf("spiffe://%s/%s/%s", trustDomain, region, gpu),
+				ParentId: fmt.Sprintf("spiffe://%s/spire/server", trustDomain),
+				Selectors: []*common.Selector{
+					{Type: "k8s_psat:agent_node_label", Value: fmt.Sprintf("region:%s", region)},
+					{Type: "k8s_psat:agent_node_label", Value: fmt.Sprintf("gpu:%s", gpu)},
+				},
 			})
 
-			for _, n := range nodes {
-				cluster := selectorValue(n.Selectors, "k8s_psat:cluster")
-				uid := selectorValue(n.Selectors, "k8s_psat:agent_node_uid")
-				entries = append(entries, &common.RegistrationEntry{
-					EntryId:   mustUUID(),
-					SpiffeId:  fmt.Sprintf("spiffe://%s/%s/%s", trustDomain, cluster, uid),
-					ParentId:  fmt.Sprintf("spiffe://%s/%s/%s", trustDomain, region, gpu),
-					Selectors: []*common.Selector{{Type: "k8s_psat:agent_node_uid", Value: uid}},
-					DnsNames:  []string{selectorValue(n.Selectors, "k8s_psat:agent_node_name")},
-				})
-			}
+			// for _, n := range nodes {
+			// 	cluster := selectorValue(n.Selectors, "k8s_psat:cluster")
+			// 	uid := selectorValue(n.Selectors, "k8s_psat:agent_node_uid")
+			// 	entries = append(entries, &common.RegistrationEntry{
+			// 		EntryId:   mustUUID(),
+			// 		SpiffeId:  fmt.Sprintf("spiffe://%s/%s/%s", trustDomain, cluster, uid),
+			// 		ParentId:  fmt.Sprintf("spiffe://%s/%s/%s", trustDomain, region, gpu),
+			// 		Selectors: []*common.Selector{{Type: "k8s_psat:agent_node_uid", Value: uid}},
+			// 		DnsNames:  []string{selectorValue(n.Selectors, "k8s_psat:agent_node_name")},
+			// 	})
+			// }
 		}
 	}
 
@@ -388,8 +432,8 @@ func createNode(region, cluster, name string, num int) (*common.AttestedNode, er
 	}
 
 	// Use parts of the random UUID for other random items to reduce calls
-	arch := archValues[name[1]%2]
-	gpu := gpuValues[name[2]%2]
+	arch := archValues[name[2]%2]
+	gpu := gpuValues[name[3]%2]
 
 	selectors := []*common.Selector{
 		{Type: "k8s_psat:cluster", Value: fmt.Sprintf("%s-%s", region, cluster)},
