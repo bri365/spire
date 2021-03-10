@@ -98,6 +98,10 @@ func TestWithMetrics(t *testing.T) {
 			methodName: "FetchRegistrationEntry",
 		},
 		{
+			key:        "datastore.registration_entry.fetch_authorized",
+			methodName: "FetchAuthorizedEntries",
+		},
+		{
 			key:        "datastore.node.selectors.fetch",
 			methodName: "GetNodeSelectors",
 		},
@@ -278,6 +282,10 @@ func (ds *fakeDataStore) FetchBundle(context.Context, *datastore.FetchBundleRequ
 
 func (ds *fakeDataStore) FetchJoinToken(context.Context, *datastore.FetchJoinTokenRequest) (*datastore.FetchJoinTokenResponse, error) {
 	return &datastore.FetchJoinTokenResponse{}, ds.err
+}
+
+func (ds *fakeDataStore) FetchAuthorizedEntries(context.Context, *datastore.FetchAuthorizedEntriesRequest) (*datastore.FetchAuthorizedEntriesResponse, error) {
+	return &datastore.FetchAuthorizedEntriesResponse{}, ds.err
 }
 
 func (ds *fakeDataStore) FetchRegistrationEntry(context.Context, *datastore.FetchRegistrationEntryRequest) (*datastore.FetchRegistrationEntryResponse, error) {

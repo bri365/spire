@@ -34,6 +34,10 @@ const (
 	// to add clarity
 	Delete = "delete"
 
+	// FetchAuthorized functionality related to fetching some authorized entity
+	// Should be used with other tags to add clarity
+	FetchAuthorized = "fetch_authorized"
+
 	// Fetch functionality related to fetching some entity; should be used with other tags
 	// to add clarity
 	Fetch = "fetch"

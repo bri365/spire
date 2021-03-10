@@ -25,6 +25,11 @@ func StartDeleteRegistrationCall(m telemetry.Metrics) *telemetry.CallCounter {
 	return telemetry.StartCall(m, telemetry.Datastore, telemetry.RegistrationEntry, telemetry.Delete)
 }
 
+// StartFetchAuthorizedEntriesCall return metric for server datastore on fetching authorized entries.
+func StartFetchAuthorizedEntriesCall(m telemetry.Metrics) *telemetry.CallCounter {
+	return telemetry.StartCall(m, telemetry.Datastore, telemetry.RegistrationEntry, telemetry.FetchAuthorized)
+}
+
 // StartFetchRegistrationCall return metric
 // for server's datastore, on creating a registration.
 func StartFetchRegistrationCall(m telemetry.Metrics) *telemetry.CallCounter {

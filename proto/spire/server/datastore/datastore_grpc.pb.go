@@ -56,6 +56,8 @@ type DataStoreClient interface {
 	ListNodeSelectors(ctx context.Context, in *ListNodeSelectorsRequest, opts ...grpc.CallOption) (*ListNodeSelectorsResponse, error)
 	// Creates a registration entry
 	CreateRegistrationEntry(ctx context.Context, in *CreateRegistrationEntryRequest, opts ...grpc.CallOption) (*CreateRegistrationEntryResponse, error)
+	// Fetches entries the specified agent is authorized to distribute
+	FetchAuthorizedEntries(ctx context.Context, in *FetchAuthorizedEntriesRequest, opts ...grpc.CallOption) (*FetchAuthorizedEntriesResponse, error)
 	// Fetches a specific registration entry
 	FetchRegistrationEntry(ctx context.Context, in *FetchRegistrationEntryRequest, opts ...grpc.CallOption) (*FetchRegistrationEntryResponse, error)
 	// Counts registration entries
@@ -263,6 +265,15 @@ func (c *dataStoreClient) CreateRegistrationEntry(ctx context.Context, in *Creat
 	return out, nil
 }
 
+func (c *dataStoreClient) FetchAuthorizedEntries(ctx context.Context, in *FetchAuthorizedEntriesRequest, opts ...grpc.CallOption) (*FetchAuthorizedEntriesResponse, error) {
+	out := new(FetchAuthorizedEntriesResponse)
+	err := c.cc.Invoke(ctx, "/spire.server.datastore.DataStore/FetchAuthorizedEntries", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *dataStoreClient) FetchRegistrationEntry(ctx context.Context, in *FetchRegistrationEntryRequest, opts ...grpc.CallOption) (*FetchRegistrationEntryResponse, error) {
 	out := new(FetchRegistrationEntryResponse)
 	err := c.cc.Invoke(ctx, "/spire.server.datastore.DataStore/FetchRegistrationEntry", in, out, opts...)
@@ -413,6 +424,8 @@ type DataStoreServer interface {
 	ListNodeSelectors(context.Context, *ListNodeSelectorsRequest) (*ListNodeSelectorsResponse, error)
 	// Creates a registration entry
 	CreateRegistrationEntry(context.Context, *CreateRegistrationEntryRequest) (*CreateRegistrationEntryResponse, error)
+	// Fetches entries the specified agent is authorized to distribute
+	FetchAuthorizedEntries(context.Context, *FetchAuthorizedEntriesRequest) (*FetchAuthorizedEntriesResponse, error)
 	// Fetches a specific registration entry
 	FetchRegistrationEntry(context.Context, *FetchRegistrationEntryRequest) (*FetchRegistrationEntryResponse, error)
 	// Counts registration entries
@@ -502,6 +515,9 @@ func (UnimplementedDataStoreServer) ListNodeSelectors(context.Context, *ListNode
 }
 func (UnimplementedDataStoreServer) CreateRegistrationEntry(context.Context, *CreateRegistrationEntryRequest) (*CreateRegistrationEntryResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method CreateRegistrationEntry not implemented")
+}
+func (UnimplementedDataStoreServer) FetchAuthorizedEntries(context.Context, *FetchAuthorizedEntriesRequest) (*FetchAuthorizedEntriesResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method FetchAuthorizedEntries not implemented")
 }
 func (UnimplementedDataStoreServer) FetchRegistrationEntry(context.Context, *FetchRegistrationEntryRequest) (*FetchRegistrationEntryResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method FetchRegistrationEntry not implemented")
@@ -894,6 +910,24 @@ func _DataStore_CreateRegistrationEntry_Handler(srv interface{}, ctx context.Con
 	return interceptor(ctx, in, info, handler)
 }
 
+func _DataStore_FetchAuthorizedEntries_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(FetchAuthorizedEntriesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DataStoreServer).FetchAuthorizedEntries(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/spire.server.datastore.DataStore/FetchAuthorizedEntries",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DataStoreServer).FetchAuthorizedEntries(ctx, req.(*FetchAuthorizedEntriesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _DataStore_FetchRegistrationEntry_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(FetchRegistrationEntryRequest)
 	if err := dec(in); err != nil {
@@ -1189,6 +1223,10 @@ var _DataStore_serviceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CreateRegistrationEntry",
 			Handler:    _DataStore_CreateRegistrationEntry_Handler,
+		},
+		{
+			MethodName: "FetchAuthorizedEntries",
+			Handler:    _DataStore_FetchAuthorizedEntries_Handler,
 		},
 		{
 			MethodName: "FetchRegistrationEntry",

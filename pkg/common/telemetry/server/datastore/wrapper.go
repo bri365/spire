@@ -91,6 +91,12 @@ func (w metricsWrapper) FetchJoinToken(ctx context.Context, req *datastore.Fetch
 	return w.ds.FetchJoinToken(ctx, req)
 }
 
+func (w metricsWrapper) FetchAuthorizedEntries(ctx context.Context, req *datastore.FetchAuthorizedEntriesRequest) (_ *datastore.FetchAuthorizedEntriesResponse, err error) {
+	callCounter := StartFetchAuthorizedEntriesCall(w.m)
+	defer callCounter.Done(&err)
+	return w.ds.FetchAuthorizedEntries(ctx, req)
+}
+
 func (w metricsWrapper) FetchRegistrationEntry(ctx context.Context, req *datastore.FetchRegistrationEntryRequest) (_ *datastore.FetchRegistrationEntryResponse, err error) {
 	callCounter := StartFetchRegistrationCall(w.m)
 	defer callCounter.Done(&err)

@@ -45,6 +45,8 @@ type DeleteRegistrationEntryRequest = datastore.DeleteRegistrationEntryRequest  
 type DeleteRegistrationEntryResponse = datastore.DeleteRegistrationEntryResponse   //nolint: golint
 type FetchAttestedNodeRequest = datastore.FetchAttestedNodeRequest                 //nolint: golint
 type FetchAttestedNodeResponse = datastore.FetchAttestedNodeResponse               //nolint: golint
+type FetchAuthorizedEntriesRequest = datastore.FetchAuthorizedEntriesRequest       //nolint: golint
+type FetchAuthorizedEntriesResponse = datastore.FetchAuthorizedEntriesResponse     //nolint: golint
 type FetchBundleRequest = datastore.FetchBundleRequest                             //nolint: golint
 type FetchBundleResponse = datastore.FetchBundleResponse                           //nolint: golint
 type FetchJoinTokenRequest = datastore.FetchJoinTokenRequest                       //nolint: golint
@@ -111,6 +113,7 @@ type DataStore interface {
 	DeleteJoinToken(context.Context, *DeleteJoinTokenRequest) (*DeleteJoinTokenResponse, error)
 	DeleteRegistrationEntry(context.Context, *DeleteRegistrationEntryRequest) (*DeleteRegistrationEntryResponse, error)
 	FetchAttestedNode(context.Context, *FetchAttestedNodeRequest) (*FetchAttestedNodeResponse, error)
+	FetchAuthorizedEntries(context.Context, *FetchAuthorizedEntriesRequest) (*FetchAuthorizedEntriesResponse, error)
 	FetchBundle(context.Context, *FetchBundleRequest) (*FetchBundleResponse, error)
 	FetchJoinToken(context.Context, *FetchJoinTokenRequest) (*FetchJoinTokenResponse, error)
 	FetchRegistrationEntry(context.Context, *FetchRegistrationEntryRequest) (*FetchRegistrationEntryResponse, error)
@@ -145,6 +148,7 @@ type Plugin interface {
 	DeleteJoinToken(context.Context, *DeleteJoinTokenRequest) (*DeleteJoinTokenResponse, error)
 	DeleteRegistrationEntry(context.Context, *DeleteRegistrationEntryRequest) (*DeleteRegistrationEntryResponse, error)
 	FetchAttestedNode(context.Context, *FetchAttestedNodeRequest) (*FetchAttestedNodeResponse, error)
+	FetchAuthorizedEntries(context.Context, *FetchAuthorizedEntriesRequest) (*FetchAuthorizedEntriesResponse, error)
 	FetchBundle(context.Context, *FetchBundleRequest) (*FetchBundleResponse, error)
 	FetchJoinToken(context.Context, *FetchJoinTokenRequest) (*FetchJoinTokenResponse, error)
 	FetchRegistrationEntry(context.Context, *FetchRegistrationEntryRequest) (*FetchRegistrationEntryResponse, error)
@@ -263,6 +267,10 @@ func (a pluginClientAdapter) DeleteRegistrationEntry(ctx context.Context, in *De
 
 func (a pluginClientAdapter) FetchAttestedNode(ctx context.Context, in *FetchAttestedNodeRequest) (*FetchAttestedNodeResponse, error) {
 	return a.client.FetchAttestedNode(ctx, in)
+}
+
+func (a pluginClientAdapter) FetchAuthorizedEntries(ctx context.Context, in *FetchAuthorizedEntriesRequest) (*FetchAuthorizedEntriesResponse, error) {
+	return a.client.FetchAuthorizedEntries(ctx, in)
 }
 
 func (a pluginClientAdapter) FetchBundle(ctx context.Context, in *FetchBundleRequest) (*FetchBundleResponse, error) {

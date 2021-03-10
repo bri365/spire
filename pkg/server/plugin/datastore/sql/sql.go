@@ -44,6 +44,7 @@ var (
 )
 
 const (
+	// PluginName is the name of this datastore plugin implementation.
 	PluginName = "sql"
 
 	// MySQL database type
@@ -54,6 +55,7 @@ const (
 	SQLite = "sqlite3"
 )
 
+// BuiltIn designates this plugin as part of the core product.
 func BuiltIn() catalog.Plugin {
 	return builtin(New())
 }
@@ -121,6 +123,7 @@ func New() *Plugin {
 	return &Plugin{}
 }
 
+// SetLogger sets the logger for the plugin.
 func (ds *Plugin) SetLogger(logger hclog.Logger) {
 	ds.log = logger
 }
@@ -353,13 +356,19 @@ func (ds *Plugin) CreateRegistrationEntry(ctx context.Context,
 	return resp, nil
 }
 
+// FetchAuthorizedEntries fetches entries the specified agent is authorized to distribute
+func (ds *Plugin) FetchAuthorizedEntries(ctx context.Context,
+	req *datastore.FetchAuthorizedEntriesRequest) (resp *datastore.FetchAuthorizedEntriesResponse, err error) {
+	return resp, nil
+}
+
 // FetchRegistrationEntry fetches an existing registration by entry ID
 func (ds *Plugin) FetchRegistrationEntry(ctx context.Context,
 	req *datastore.FetchRegistrationEntryRequest) (resp *datastore.FetchRegistrationEntryResponse, err error) {
 	return fetchRegistrationEntry(ctx, ds.db, req)
 }
 
-// CounCountRegistrationEntries counts all registrations (pagination available)
+// CountRegistrationEntries counts all registrations (pagination available)
 func (ds *Plugin) CountRegistrationEntries(ctx context.Context,
 	req *datastore.CountRegistrationEntriesRequest) (resp *datastore.CountRegistrationEntriesResponse, err error) {
 	if err = ds.withReadTx(ctx, func(tx *gorm.DB) (err error) {

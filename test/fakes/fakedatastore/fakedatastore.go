@@ -199,6 +199,10 @@ func (s *DataStore) CreateRegistrationEntry(ctx context.Context, req *datastore.
 	return s.ds.CreateRegistrationEntry(ctx, req)
 }
 
+func (s *DataStore) FetchAuthorizedEntries(ctx context.Context, req *datastore.FetchAuthorizedEntriesRequest) (resp *datastore.FetchAuthorizedEntriesResponse, err error) {
+	return resp, nil
+}
+
 func (s *DataStore) FetchRegistrationEntry(ctx context.Context, req *datastore.FetchRegistrationEntryRequest) (*datastore.FetchRegistrationEntryResponse, error) {
 	if err := s.getNextError(); err != nil {
 		return nil, err
