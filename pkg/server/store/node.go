@@ -602,8 +602,21 @@ func (s *Shim) ListNodeSelectors(ctx context.Context,
 
 	s.Log.Debug("LNS", "req", req)
 
-	// Start with a reasonable size array to reduce the number of reallocations
-	selectors := make([]*datastore.NodeSelectors, 0, 256)
+	// Serve from cache if available
+	if s.c.nodeCacheEnabled && s.c.initialized {
+		s.c.mu.RLock()
+		selectors := make([]*datastore.NodeSelectors, len(s.c.nodes))
+		i := 0
+		for _, n := range s.c.nodes {
+			selectors[i] = &datastore.NodeSelectors{
+				SpiffeId:  n.SpiffeId,
+				Selectors: n.Selectors,
+			}
+			i++
+		}
+		s.c.mu.RUnlock()
+		return &datastore.ListNodeSelectorsResponse{Selectors: selectors}, nil
+	}
 
 	// Node expiry index contains node selectors, get all or requested valid after nodes
 	key := nodeExpPrefix
@@ -617,6 +630,7 @@ func (s *Shim) ListNodeSelectors(ctx context.Context,
 		return nil, err
 	}
 
+	selectors := make([]*datastore.NodeSelectors, 0, res.Total)
 	for _, kv := range res.Kvs {
 		sel := &datastore.NodeSelectors{}
 		err = proto.Unmarshal(kv.Value, sel)

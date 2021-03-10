@@ -64,7 +64,7 @@ func (s *Shim) CountBundles(ctx context.Context,
 	}
 
 	// Set range to all bundle keys
-	key := bundleKey("")
+	key := BundleKey("")
 	end := AllBundles
 	res, err := s.Store.Get(ctx, &store.GetRequest{Key: key, End: end, CountOnly: true})
 	if err != nil {
@@ -89,7 +89,7 @@ func (s *Shim) CreateBundle(ctx context.Context,
 
 	// build the bundle key and value
 	b := req.Bundle
-	k := bundleKey(b.TrustDomainId)
+	k := BundleKey(b.TrustDomainId)
 	v, err := proto.Marshal(req.Bundle)
 	if err != nil {
 		return nil, err
@@ -183,7 +183,7 @@ func (s *Shim) DeleteBundle(ctx context.Context,
 
 	// Build delete list, ensuring bundle version matches read from above
 	del := []*store.KeyValue{{
-		Key:     bundleKey(id),
+		Key:     BundleKey(id),
 		Compare: store.Compare_EQUALS,
 		Version: ver,
 	}}
@@ -240,7 +240,7 @@ func (s *Shim) FetchBundle(ctx context.Context,
 func (s *Shim) fetchBundle(ctx context.Context,
 	req *datastore.FetchBundleRequest) (*datastore.FetchBundleResponse, int64, error) {
 
-	res, err := s.Store.Get(ctx, &store.GetRequest{Key: bundleKey(req.TrustDomainId)})
+	res, err := s.Store.Get(ctx, &store.GetRequest{Key: BundleKey(req.TrustDomainId)})
 	if err != nil {
 		return nil, 0, err
 	}
@@ -287,7 +287,7 @@ func (s *Shim) listBundles(ctx context.Context, rev int64,
 	lastKey := ""
 
 	// Start with all bundle identifiers and limit of 0 (no limit)
-	key := bundleKey(" ")
+	key := BundleKey(" ")
 	end := AllBundles
 	var limit int64
 
@@ -321,7 +321,7 @@ func (s *Shim) listBundles(ctx context.Context, rev int64,
 				}
 			}
 			if p != nil && len(resp.Bundles) > 0 {
-				p.Token = bundleKey(lastKey)
+				p.Token = BundleKey(lastKey)
 			}
 			s.c.mu.RUnlock()
 			return resp, s.c.storeRevision, nil
@@ -470,7 +470,7 @@ func (s *Shim) updateBundle(ctx context.Context,
 	}
 
 	var v []byte
-	k := bundleKey(req.Bundle.TrustDomainId)
+	k := BundleKey(req.Bundle.TrustDomainId)
 	v, err = proto.Marshal(req.Bundle)
 	if err != nil {
 		return nil, err
@@ -504,8 +504,8 @@ func IsBundleKey(key string) bool {
 	return false
 }
 
-// bundleKey returns a string formatted key for a bundle
-func bundleKey(id string) string {
+// BundleKey returns a string formatted key for a bundle
+func BundleKey(id string) string {
 	// e.g. "B|spiffie://example.com"
 	return fmt.Sprintf("%s%s", BundlePrefix, id)
 }

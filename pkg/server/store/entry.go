@@ -94,7 +94,7 @@ func (s *Shim) CreateRegistrationEntry(ctx context.Context,
 		// NOTE: trading off performance for better error reporting, we could identify the specific
 		// trust domain(s) missing by querying for them here instead of executing the comparison
 		// in the transaction as etcd does not identify which comparison(s) fail
-		cmp = append(cmp, &store.KeyValue{Key: bundleKey(domain), Compare: store.Compare_PRESENT})
+		cmp = append(cmp, &store.KeyValue{Key: BundleKey(domain), Compare: store.Compare_PRESENT})
 		put = append(put, &store.KeyValue{Key: entryFedByDomainKey(e.EntryId, domain)})
 	}
 

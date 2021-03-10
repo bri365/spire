@@ -35,6 +35,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io/ioutil"
 	"math"
 	"math/rand"
 	"net/url"
@@ -43,9 +44,11 @@ import (
 
 	"github.com/roguesoftware/etcd/clientv3"
 	"github.com/spf13/cobra"
+	"github.com/spiffe/spire/pkg/common/pemutil"
 	"github.com/spiffe/spire/pkg/server/plugin/datastore"
 	"github.com/spiffe/spire/pkg/server/store"
 	"github.com/spiffe/spire/proto/spire/common"
+	"github.com/spiffe/spire/proto/spire/types"
 	"google.golang.org/protobuf/proto"
 	"gopkg.in/cheggaaa/pb.v1"
 )
@@ -64,8 +67,10 @@ var (
 
 	certNotAfter    int64
 	newCertNotAfter int64
-	totalNodes      int
-	totalWorkloads  int
+
+	totalBundles   int
+	totalNodes     int
+	totalWorkloads int
 
 	certSerialNumber    string
 	newCertSerialNumber string
@@ -77,11 +82,13 @@ var (
 	regions    []string
 	archValues = []string{"aarch64", "amd64"}
 	gpuValues  = []string{"nogpu", "cuda"}
-	// bwValues       = []string{"1", "5", "10", "25", "50", "100"}
+	// bwValues   = []string{"1", "5", "10", "25", "50", "100"}
 
 	nodesByRegion = map[string][]*common.AttestedNode{}
 	archByRegion  = map[string]map[string][]*common.AttestedNode{}
 	gpuByRegion   = map[string]map[string][]*common.AttestedNode{}
+
+	federatedBundleIDs = []string{}
 )
 
 func init() {
@@ -89,8 +96,11 @@ func init() {
 	createCmd.Flags().StringVar(&trustDomain, "trust-domain", "domain.test", "trust domain name")
 	createCmd.Flags().StringVar(&clusterFile, "cluster-file", "clusters.txt", "filename for cluster names")
 	createCmd.Flags().StringVar(&regionFile, "region-file", "regions.txt", "filename for region names")
-	createCmd.Flags().IntVar(&totalNodes, "nodes", 100, "number of attested nodes to create")
-	createCmd.Flags().IntVar(&totalWorkloads, "workloads", 100, "number of workloads to create")
+
+	createCmd.Flags().IntVar(&totalBundles, "bundles", 0, "number of federated bundles to create")
+	createCmd.Flags().IntVar(&totalNodes, "nodes", 10, "number of attested nodes to create")
+	createCmd.Flags().IntVar(&totalWorkloads, "workloads", 10, "number of workloads to create")
+
 	createCmd.Flags().BoolVar(&createHostgroups, "host-groups", false, "create a host group entry per node")
 	createCmd.Flags().BoolVar(&createIndices, "index", false, "create node index entries")
 	createCmd.Flags().BoolVar(&progress, "progress", false, "show progress bar")
@@ -128,7 +138,7 @@ func createFunc(cmd *cobra.Command, args []string) {
 		nodeCount = nodeCount + (clientTotal-rcnTotal)/(regionCount*clusterCount) + 1
 	}
 
-	// Create node maps
+	// Create empty node maps
 	for _, r := range regions {
 		archByRegion[r] = map[string][]*common.AttestedNode{}
 		for _, a := range archValues {
@@ -141,34 +151,107 @@ func createFunc(cmd *cobra.Command, args []string) {
 	}
 
 	// Create a list of nodes to store
-	allNodes := createNodes(regionCount, clusterCount, nodeCount)
+	nodes := createNodes(regionCount, clusterCount, nodeCount)
 
-	if len(allNodes) < nodesPerClient*len(clients) {
-		fmt.Printf("Insufficient nodes (%d) for %d items per %d clients", len(allNodes), nodesPerClient, len(clients))
+	if len(nodes) < nodesPerClient*len(clients) {
+		fmt.Printf("Insufficient nodes (%d) for %d items per %d clients", len(nodes), nodesPerClient, len(clients))
 		os.Exit(1)
 	}
 
 	fmt.Printf("Storing %d nodes across %d clusters with %d nodes each\n", totalNodes, regionCount*clusterCount, nodesPerClient)
-	storeNodes(clients, allNodes, nodesPerClient)
+
+	// Store the nodes
+	storeNodes(clients, nodes, nodesPerClient)
 
 	// Create federated bundles
+	bundles := createFederatedBundles(totalBundles)
+
+	// Store the bundles
+	storeFederatedBundles(clients[0], bundles)
 
 	// Create lists of hostgroup entries
-	allEntries := createHostgroupEntries()
-
-	// Create lists of agent entries for each hostgroup
+	entries := createHostgroupEntries()
 
 	// Create lists of workload entries for each hostgroup
-	allEntries = append(allEntries, createWorkloadEntries()...)
+	entries = append(entries, createWorkloadEntries(totalWorkloads, bundles)...)
 
 	// Store the entries
-	storeEntries(clients, allEntries)
+	storeEntries(clients, entries)
+}
+
+// createFederatedBundles
+func createFederatedBundles(total int) []*types.Bundle {
+	bundles := []*types.Bundle{}
+	if total < 1 {
+		return bundles
+	}
+
+	f, err := os.Open("ca.pem")
+	if err != nil {
+		fmt.Println("Error opening ca.pem")
+		os.Exit(1)
+	}
+	defer f.Close()
+
+	pem, err := ioutil.ReadAll(f)
+	if err != nil {
+		fmt.Println("Error reading ca.pem")
+		os.Exit(1)
+	}
+
+	tds := mustRandomFileStrings("trustdomains.txt", total)
+	for _, td := range tds {
+		rootCAs, err := pemutil.ParseCertificates(pem)
+		if err != nil {
+			fmt.Printf("unable to parse ca.pem: %v", err)
+			os.Exit(1)
+		}
+
+		id := fmt.Sprintf("spiffe://%s", td)
+		b := &types.Bundle{TrustDomain: id}
+		for _, rootCA := range rootCAs {
+			b.X509Authorities = append(b.X509Authorities, &types.X509Certificate{Asn1: rootCA.Raw})
+		}
+
+		bundles = append(bundles, b)
+		federatedBundleIDs = append(federatedBundleIDs, id)
+	}
+
+	return bundles
+}
+
+func storeFederatedBundles(client *clientv3.Client, all []*types.Bundle) {
+	// Store the entries in parallel across the client connections
+	start := time.Now().UnixNano()
+	for _, b := range all {
+		k := store.BundleKey(b.TrustDomain)
+		v, err := proto.Marshal(b)
+		if err != nil {
+			fmt.Printf("unable to marshal bundle %s: %v", b.TrustDomain, err)
+			os.Exit(1)
+		}
+
+		_, err = client.Put(context.TODO(), k, string(v))
+		if err != nil {
+			fmt.Printf("unable to store bundle %s: %v", b.TrustDomain, err)
+			os.Exit(1)
+		}
+
+		if debug {
+			fmt.Printf("Stored %s\n", k)
+		}
+	}
+	finish := time.Now().UnixNano()
+	delta := (float64(finish) - float64(start)) / 1000000000.0
+	fmt.Printf("%d bundles written in %.3f sec (%.3f ops/sec)\n", len(all), delta, float64(len(all))/delta)
+
+	return
 }
 
 // createWorkloadEntries() {}
-func createWorkloadEntries() []*common.RegistrationEntry {
+func createWorkloadEntries(total int, bundles []*types.Bundle) []*common.RegistrationEntry {
 	entries := []*common.RegistrationEntry{}
-	for i := 0; i < totalWorkloads; i++ {
+	for i := 0; i < total; i++ {
 		region := regions[rand.Intn(len(regions))]
 		entry := &common.RegistrationEntry{
 			EntryId:  mustUUID(),
@@ -178,6 +261,8 @@ func createWorkloadEntries() []*common.RegistrationEntry {
 				{Type: "app", Value: randString(lowerNum, 12)},
 			},
 		}
+
+		// Set a random parent from host groups
 		switch rand.Intn(5) {
 		case 4:
 			arch := archValues[rand.Intn(len(archValues))]
@@ -188,6 +273,27 @@ func createWorkloadEntries() []*common.RegistrationEntry {
 		default:
 			entry.ParentId = fmt.Sprintf("spiffe://%s/%s", trustDomain, region)
 		}
+
+		if len(federatedBundleIDs) > 0 {
+			// Set random federated bundles for 20% of entries
+			if rand.Intn(5) == 0 {
+				count := rand.Intn(rand.Intn(rand.Intn(rand.Intn(len(federatedBundleIDs)+1)+1)+1)+1) + 1
+				if count > len(federatedBundleIDs) {
+					count = len(federatedBundleIDs)
+				}
+				indexSet := map[int]struct{}{}
+				for {
+					indexSet[rand.Intn(len(federatedBundleIDs))] = struct{}{}
+					if len(indexSet) >= count {
+						break
+					}
+				}
+				for i := range indexSet {
+					entry.FederatesWith = append(entry.FederatesWith, federatedBundleIDs[i])
+				}
+			}
+		}
+
 		entries = append(entries, entry)
 	}
 
@@ -236,18 +342,6 @@ func createHostgroupEntries() []*common.RegistrationEntry {
 					{Type: "k8s_psat:agent_node_label", Value: fmt.Sprintf("arch:%s", arch)},
 				},
 			})
-
-			// for _, n := range nodes {
-			// 	cluster := selectorValue(n.Selectors, "k8s_psat:cluster")
-			// 	uid := selectorValue(n.Selectors, "k8s_psat:agent_node_uid")
-			// 	entries = append(entries, &common.RegistrationEntry{
-			// 		EntryId:   mustUUID(),
-			// 		SpiffeId:  fmt.Sprintf("spiffe://%s/%s/%s", trustDomain, cluster, uid),
-			// 		ParentId:  fmt.Sprintf("spiffe://%s/%s/%s", trustDomain, region, arch),
-			// 		Selectors: []*common.Selector{{Type: "k8s_psat:agent_node_uid", Value: uid}},
-			// 		DnsNames:  []string{selectorValue(n.Selectors, "k8s_psat:agent_node_name")},
-			// 	})
-			// }
 		}
 	}
 
@@ -262,18 +356,6 @@ func createHostgroupEntries() []*common.RegistrationEntry {
 					{Type: "k8s_psat:agent_node_label", Value: fmt.Sprintf("gpu:%s", gpu)},
 				},
 			})
-
-			// for _, n := range nodes {
-			// 	cluster := selectorValue(n.Selectors, "k8s_psat:cluster")
-			// 	uid := selectorValue(n.Selectors, "k8s_psat:agent_node_uid")
-			// 	entries = append(entries, &common.RegistrationEntry{
-			// 		EntryId:   mustUUID(),
-			// 		SpiffeId:  fmt.Sprintf("spiffe://%s/%s/%s", trustDomain, cluster, uid),
-			// 		ParentId:  fmt.Sprintf("spiffe://%s/%s/%s", trustDomain, region, gpu),
-			// 		Selectors: []*common.Selector{{Type: "k8s_psat:agent_node_uid", Value: uid}},
-			// 		DnsNames:  []string{selectorValue(n.Selectors, "k8s_psat:agent_node_name")},
-			// 	})
-			// }
 		}
 	}
 
@@ -314,7 +396,6 @@ func storeEntries(clients []*clientv3.Client, all []*common.RegistrationEntry) {
 			} else {
 				entries = all[count*clientNumber : count*(clientNumber+1)]
 			}
-			fmt.Printf("%d has %d entries\n", clientNumber, len(entries))
 			for j := 0; j < len(entries); j++ {
 				err := c.storeEntry(entries[j], createIndices)
 				if !ok(err) {

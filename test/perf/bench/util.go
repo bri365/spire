@@ -120,6 +120,11 @@ func mustLoad(name string) []string {
 }
 
 func mustRandomFileStrings(name string, count int) []string {
+	stringList := []string{}
+	if count < 1 {
+		return stringList
+	}
+
 	strings := mustLoad(name)
 	if len(strings) < count {
 		fmt.Printf("Insufficient strings %d < %d\n", len(strings), count)
@@ -136,7 +141,6 @@ func mustRandomFileStrings(name string, count int) []string {
 		}
 	}
 
-	stringList := []string{}
 	for k := range stringSet {
 		stringList = append(stringList, k)
 	}

@@ -2,7 +2,6 @@ package entrycache
 
 import (
 	"context"
-	"fmt"
 	"sync"
 
 	"github.com/spiffe/go-spiffe/v2/spiffeid"
@@ -10,8 +9,6 @@ import (
 )
 
 var (
-	reported = 0
-
 	seenSetPool = sync.Pool{
 		New: func() interface{} {
 			return make(seenSet)
@@ -165,32 +162,6 @@ func Build(ctx context.Context, entryIter EntryIterator, agentIter AgentIterator
 	}
 	if err := agentIter.Err(); err != nil {
 		return nil, err
-	}
-
-	if reported < 1 {
-		fmt.Println("entries")
-		for s, es := range entries {
-			fmt.Println(s)
-			for _, e := range es {
-				fmt.Printf("%s %s %v\n", e.SpiffeId, e.ParentId, e.Selectors)
-			}
-		}
-		fmt.Println("bysel")
-		for b, as := range bysel {
-			fmt.Printf("sel %v\n", b)
-			for _, a := range as {
-				fmt.Printf("%v\n", a)
-			}
-		}
-
-		fmt.Println("aliases")
-		for s, as := range aliases {
-			fmt.Println(s)
-			for _, a := range as {
-				fmt.Printf("%s %s %s %v\n", a.id, a.entry.SpiffeId, a.entry.ParentId, a.entry.Selectors)
-			}
-		}
-		reported++
 	}
 
 	return &FullEntryCache{
