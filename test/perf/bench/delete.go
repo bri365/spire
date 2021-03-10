@@ -98,7 +98,7 @@ func deleteFunc(cmd *cobra.Command, args []string) {
 			log.Fatal(err)
 		}
 
-		total = total + dr.Deleted
+		total += dr.Deleted
 	}
 
 	fmt.Printf("Deleted %d keys\n", total)

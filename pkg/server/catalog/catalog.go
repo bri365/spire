@@ -223,7 +223,7 @@ func Load(ctx context.Context, config Config) (*Repository, error) {
 	ds, dsErr = loadSQLDataStore(ctx, config.Log, dataStoreConfig)
 
 	if stErr != nil && dsErr != nil {
-		return nil, fmt.Errorf("Error loading both store and datastore; dsErr: %v and stErr: %v", dsErr, stErr)
+		return nil, fmt.Errorf("error loading both store and datastore; dsErr: %v and stErr: %v", dsErr, stErr)
 	}
 
 	pluginConfigs, err := catalog.PluginConfigsFromHCL(config.PluginConfig)

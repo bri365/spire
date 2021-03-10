@@ -17,7 +17,6 @@ import (
 	ss "github.com/spiffe/spire/pkg/server/store"
 	spi "github.com/spiffe/spire/proto/spire/common/plugin"
 	pb "github.com/spiffe/spire/proto/spire/server/store"
-	"github.com/zeebo/errs"
 
 	"github.com/roguesoftware/etcd/clientv3"
 	"github.com/roguesoftware/etcd/pkg/transport"
@@ -39,8 +38,6 @@ var (
 		Author:      "",
 		Company:     "",
 	}
-
-	etcdError = errs.Class("store-etcd")
 
 	// Default values may be overridden by configuration
 	dialTimeout = 5 * time.Second
@@ -119,7 +116,7 @@ func (st *Plugin) SetLogger(logger hclog.Logger) {
 // Validate checks the given plugin configuration.
 func (cfg *configuration) Validate() error {
 	if len(cfg.Endpoints) == 0 {
-		return errors.New("At least one endpoint must be set")
+		return errors.New("at least one endpoint must be set")
 	}
 
 	if cfg.ClientCertPath == "" || cfg.ClientKeyPath == "" || cfg.RootCAPath == "" {
@@ -208,7 +205,7 @@ func (st *Plugin) Configure(ctx context.Context, req *spi.ConfigureRequest) (*sp
 	st.mu.Lock()
 	defer st.mu.Unlock()
 
-	if err := st.openConnection(cfg, false); err != nil {
+	if err := st.openConnection(cfg); err != nil {
 		return nil, err
 	}
 
@@ -218,7 +215,7 @@ func (st *Plugin) Configure(ctx context.Context, req *spi.ConfigureRequest) (*sp
 }
 
 // TODO explore opening multiple client connections for improved performance
-func (st *Plugin) openConnection(cfg *configuration, isReadOnly bool) error {
+func (st *Plugin) openConnection(cfg *configuration) error {
 	tlsInfo := transport.TLSInfo{
 		KeyFile:        cfg.ClientKeyPath,
 		CertFile:       cfg.ClientCertPath,
@@ -308,15 +305,16 @@ func (st *Plugin) Set(ctx context.Context, req *store.SetRequest) (*store.SetRes
 	for _, element := range req.Elements {
 		for _, kv := range element.Kvs {
 			// Add requested comparison, if requested; default is no comparison
-			if kv.Compare == pb.Compare_NOT_PRESENT {
+			switch kv.Compare {
+			case pb.Compare_NOT_PRESENT:
 				// Create new key
 				cmps = append(cmps, clientv3.Compare(clientv3.Version(kv.Key), "=", 0))
 				res = fmt.Sprintf("%s C %s @ 0", res, kv.Key)
-			} else if kv.Compare == pb.Compare_PRESENT {
+			case pb.Compare_PRESENT:
 				// Update existing key
 				cmps = append(cmps, clientv3.Compare(clientv3.Version(kv.Key), ">", 0))
 				res = fmt.Sprintf("%s C %s > 0", res, kv.Key)
-			} else if kv.Compare == pb.Compare_EQUALS {
+			case pb.Compare_EQUALS:
 				// Update with transactional integrity from a previous read operation
 				cmps = append(cmps, clientv3.Compare(clientv3.Version(kv.Key), "=", kv.Version))
 				res = fmt.Sprintf("%s C %s @ %d", res, kv.Key, kv.Version)

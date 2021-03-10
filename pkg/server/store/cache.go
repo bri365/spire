@@ -7,13 +7,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/golang/protobuf/proto"
 	"github.com/roguesoftware/etcd/clientv3"
 	"github.com/roguesoftware/etcd/mvcc/mvccpb"
 	"github.com/spiffe/spire/pkg/server/plugin/datastore"
 	"github.com/spiffe/spire/proto/spire/common"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 )
 
 // The cache is implemented as separate sections for each object type.
@@ -129,7 +129,7 @@ func NewCache(cfg *Configuration) Cache {
 // InitializeCache loads cache data from the store and starts watcher tasks.
 // Bulk loading is performed on the same store revision.
 // After the initial bulk load, watcher routines are started to
-// continually update the cache as store updates are procesed.
+// continually update the cache as store updates are processed.
 // NOTE: for faster startup, we could start a go routine to load
 // and validate the cache data.
 func (s *Shim) InitializeCache() error {
@@ -137,7 +137,7 @@ func (s *Shim) InitializeCache() error {
 	// Get the current store revision for consistent cache loading
 	rev, err := s.getStoreRevision(context.TODO())
 	if err != nil {
-		return fmt.Errorf("Cache: error getting initial revision %v", err)
+		return fmt.Errorf("cache error getting initial revision %v", err)
 	}
 
 	if s.c.bundleCacheEnabled {
@@ -198,7 +198,7 @@ func (s *Shim) loadBundles(rev int64) error {
 
 	token := ""
 	for {
-		br, _, err := s.listBundles(context.TODO(), rev, &datastore.ListBundlesRequest{
+		br, err := s.ListBundles(context.TODO(), &datastore.ListBundlesRequest{
 			Pagination: &datastore.Pagination{Token: token, PageSize: loadPageSize}})
 		if err != nil {
 			return err
@@ -227,14 +227,14 @@ func (s *Shim) loadBundles(rev int64) error {
 }
 
 // Add or update the given bundle in the cache
-func (s *Shim) setBundleCacheEntry(id string, bundle *common.Bundle) {
-	if s.c.bundleCacheEnabled && s.c.initialized {
-		s.c.mu.Lock()
-		s.c.bundles[id] = bundle
-		s.insertIndexKey(s.c.bundleIndex, id)
-		s.c.mu.Unlock()
-	}
-}
+// func (s *Shim) setBundleCacheEntry(id string, bundle *common.Bundle) {
+// 	if s.c.bundleCacheEnabled && s.c.initialized {
+// 		s.c.mu.Lock()
+// 		s.c.bundles[id] = bundle
+// 		s.insertIndexKey(s.c.bundleIndex, id)
+// 		s.c.mu.Unlock()
+// 	}
+// }
 
 // Fetch the given bundle from the cache
 func (s *Shim) fetchBundleCacheEntry(id string) *common.Bundle {
@@ -267,7 +267,7 @@ func (s *Shim) loadEntries(rev int64) error {
 
 	token := ""
 	for {
-		er, _, err := s.listRegistrationEntries(context.TODO(), rev, &datastore.ListRegistrationEntriesRequest{
+		er, err := s.listRegistrationEntries(context.TODO(), rev, &datastore.ListRegistrationEntriesRequest{
 			Pagination: &datastore.Pagination{Token: token, PageSize: loadPageSize}})
 		if err != nil {
 			return err
@@ -296,14 +296,14 @@ func (s *Shim) loadEntries(rev int64) error {
 }
 
 // Add or update the given attested entry in the cache
-func (s *Shim) setEntryCacheEntry(id string, entry *common.RegistrationEntry) {
-	if s.c.entryCacheEnabled && s.c.initialized {
-		s.c.mu.Lock()
-		s.c.entries[id] = entry
-		s.insertIndexKey(s.c.entryIndex, id)
-		s.c.mu.Unlock()
-	}
-}
+// func (s *Shim) setEntryCacheEntry(id string, entry *common.RegistrationEntry) {
+// 	if s.c.entryCacheEnabled && s.c.initialized {
+// 		s.c.mu.Lock()
+// 		s.c.entries[id] = entry
+// 		s.insertIndexKey(s.c.entryIndex, id)
+// 		s.c.mu.Unlock()
+// 	}
+// }
 
 // Fetch the given attested entry from the cache
 func (s *Shim) fetchEntryCacheEntry(id string) *common.RegistrationEntry {
@@ -336,7 +336,7 @@ func (s *Shim) loadNodes(rev int64) error {
 
 	token := ""
 	for {
-		nr, _, err := s.listAttestedNodes(context.TODO(), rev, &datastore.ListAttestedNodesRequest{
+		nr, err := s.listAttestedNodes(context.TODO(), rev, &datastore.ListAttestedNodesRequest{
 			Pagination: &datastore.Pagination{Token: token, PageSize: loadPageSize}})
 		if err != nil {
 			return err
@@ -466,7 +466,7 @@ func (s *Shim) removeTokenCacheEntry(id string) {
 
 // watchBundles receives a stream of updates (deletes or puts) for bundles,
 // starting at the given store revision, and applies the changes to cache.
-func (s *Shim) watchBundles(rev int64) error {
+func (s *Shim) watchBundles(rev int64) {
 	opts := []clientv3.OpOption{
 		clientv3.WithPrefix(),
 		clientv3.WithProgressNotify(),
@@ -494,7 +494,8 @@ func (s *Shim) watchBundles(rev int64) error {
 		// Hold the lock for all updates to give other routines the most recent data.
 		s.c.mu.Lock()
 		for _, e := range w.Events {
-			if e.Type == mvccpb.DELETE {
+			switch e.Type {
+			case mvccpb.DELETE:
 				id, err := bundleIDFromKey(string(e.Kv.Key))
 				if err != nil {
 					s.Log.Error("BWD error", err)
@@ -503,7 +504,7 @@ func (s *Shim) watchBundles(rev int64) error {
 					s.removeIndexKey(s.c.bundleIndex, id)
 					s.c.storeRevision = e.Kv.ModRevision
 				}
-			} else if e.Type == mvccpb.PUT {
+			case mvccpb.PUT:
 				bundle := &common.Bundle{}
 				err := proto.Unmarshal(e.Kv.Value, bundle)
 				if err != nil {
@@ -513,7 +514,7 @@ func (s *Shim) watchBundles(rev int64) error {
 					s.insertIndexKey(s.c.bundleIndex, bundle.TrustDomainId)
 					s.c.storeRevision = e.Kv.ModRevision
 				}
-			} else {
+			default:
 				s.Log.Error("BW unknown event", "type", e.Type, "kv", e.Kv)
 			}
 		}
@@ -521,13 +522,11 @@ func (s *Shim) watchBundles(rev int64) error {
 	}
 
 	// TODO restart at last successfully updated store revision
-
-	return nil
 }
 
 // watchEntries receives a stream of updates (deletes or puts) for registration entries,
 // starting at the given store revision, and applies the changes to cache.
-func (s *Shim) watchEntries(rev int64) error {
+func (s *Shim) watchEntries(rev int64) {
 	opts := []clientv3.OpOption{
 		clientv3.WithPrefix(),
 		clientv3.WithProgressNotify(),
@@ -555,7 +554,8 @@ func (s *Shim) watchEntries(rev int64) error {
 		// Hold the lock for all updates to give other routines the most recent data.
 		s.c.mu.Lock()
 		for _, e := range w.Events {
-			if e.Type == mvccpb.DELETE {
+			switch e.Type {
+			case mvccpb.DELETE:
 				id, err := entryIDFromKey(string(e.Kv.Key))
 				if err != nil {
 					s.Log.Error("EWD error", err)
@@ -564,7 +564,7 @@ func (s *Shim) watchEntries(rev int64) error {
 					s.removeIndexKey(s.c.entryIndex, id)
 					s.c.storeRevision = e.Kv.ModRevision
 				}
-			} else if e.Type == mvccpb.PUT {
+			case mvccpb.PUT:
 				entry := &common.RegistrationEntry{}
 				err := proto.Unmarshal(e.Kv.Value, entry)
 				if err != nil {
@@ -574,7 +574,7 @@ func (s *Shim) watchEntries(rev int64) error {
 					s.insertIndexKey(s.c.entryIndex, entry.EntryId)
 					s.c.storeRevision = e.Kv.ModRevision
 				}
-			} else {
+			default:
 				s.Log.Error("EW unknown event", "type", e.Type, "kv", e.Kv)
 			}
 		}
@@ -582,13 +582,11 @@ func (s *Shim) watchEntries(rev int64) error {
 	}
 
 	// TODO restart at last successfully updated store revision
-
-	return nil
 }
 
 // watchNodes receives a stream of updates (deletes or puts) for attested nodes,
 // starting at the given store revision, and applies the changes to cache.
-func (s *Shim) watchNodes(rev int64) error {
+func (s *Shim) watchNodes(rev int64) {
 	opts := []clientv3.OpOption{
 		clientv3.WithPrefix(),
 		clientv3.WithProgressNotify(),
@@ -616,7 +614,8 @@ func (s *Shim) watchNodes(rev int64) error {
 		// Hold the lock for all updates to give other routines the most recent data.
 		s.c.mu.Lock()
 		for _, e := range w.Events {
-			if e.Type == mvccpb.DELETE {
+			switch e.Type {
+			case mvccpb.DELETE:
 				id, err := nodeIDFromKey(string(e.Kv.Key))
 				if err != nil {
 					s.Log.Error("NWD error", err)
@@ -625,7 +624,7 @@ func (s *Shim) watchNodes(rev int64) error {
 					s.removeIndexKey(s.c.nodeIndex, id)
 					s.c.storeRevision = e.Kv.ModRevision
 				}
-			} else if e.Type == mvccpb.PUT {
+			case mvccpb.PUT:
 				node := &common.AttestedNode{}
 				err := proto.Unmarshal(e.Kv.Value, node)
 				if err != nil {
@@ -635,7 +634,7 @@ func (s *Shim) watchNodes(rev int64) error {
 					s.insertIndexKey(s.c.nodeIndex, node.SpiffeId)
 					s.c.storeRevision = e.Kv.ModRevision
 				}
-			} else {
+			default:
 				s.Log.Error("NW unknown event", "type", e.Type, "kv", e.Kv)
 			}
 		}
@@ -643,13 +642,11 @@ func (s *Shim) watchNodes(rev int64) error {
 	}
 
 	// TODO restart at last successfully updated store revision
-
-	return nil
 }
 
 // watchTokens receives a stream of updates (deletes or puts) for join tokens,
 // starting at the given store revision, and applies the changes to cache.
-func (s *Shim) watchTokens(rev int64) error {
+func (s *Shim) watchTokens(rev int64) {
 	opts := []clientv3.OpOption{
 		clientv3.WithPrefix(),
 		clientv3.WithProgressNotify(),
@@ -677,7 +674,8 @@ func (s *Shim) watchTokens(rev int64) error {
 		// Hold the lock for all updates to give other routines the most recent data.
 		s.c.mu.Lock()
 		for _, e := range w.Events {
-			if e.Type == mvccpb.DELETE {
+			switch e.Type {
+			case mvccpb.DELETE:
 				id, err := tokenIDFromKey(string(e.Kv.Key))
 				if err != nil {
 					s.Log.Error("TWD error", err)
@@ -686,7 +684,7 @@ func (s *Shim) watchTokens(rev int64) error {
 					s.removeIndexKey(s.c.tokenIndex, id)
 					s.c.storeRevision = e.Kv.ModRevision
 				}
-			} else if e.Type == mvccpb.PUT {
+			case mvccpb.PUT:
 				token := &datastore.JoinToken{}
 				err := proto.Unmarshal(e.Kv.Value, token)
 				if err != nil {
@@ -696,7 +694,7 @@ func (s *Shim) watchTokens(rev int64) error {
 					s.insertIndexKey(s.c.tokenIndex, token.Token)
 					s.c.storeRevision = e.Kv.ModRevision
 				}
-			} else {
+			default:
 				s.Log.Error(fmt.Sprintf("Unknown watch event %v", e))
 			}
 		}
@@ -704,8 +702,6 @@ func (s *Shim) watchTokens(rev int64) error {
 	}
 
 	// TODO restart at last successfully updated store revision
-
-	return nil
 }
 
 // insertIndexKey inserts the given key into the given index if it does not already exist.
@@ -720,7 +716,6 @@ func (s *Shim) insertIndexKey(ci *cacheIndex, key string) {
 	copy(ci.Keys[i+1:], ci.Keys[i:])
 	ci.Keys[i] = key
 	ci.Count = len(ci.Keys)
-	return
 }
 
 // removeIndexKey deletes the given key from the given index if it exists.
@@ -732,8 +727,6 @@ func (s *Shim) removeIndexKey(ci *cacheIndex, key string) {
 		ci.Count = len(ci.Keys)
 		return
 	}
-	// Not found
-	return
 }
 
 // indexFromKey returns a slice of keys from the proper cache index,
@@ -742,19 +735,20 @@ func (s *Shim) removeIndexKey(ci *cacheIndex, key string) {
 func (s *Shim) cacheIndexFromKey(key string) []string {
 	id := ""
 	var ci *cacheIndex
-	if IsBundleKey(key) {
+	switch {
+	case IsBundleKey(key):
 		ci = s.c.bundleIndex
 		id, _ = bundleIDFromKey(key)
-	} else if IsEntryKey(key) {
+	case IsEntryKey(key):
 		ci = s.c.entryIndex
 		id, _ = entryIDFromKey(key)
-	} else if IsNodeKey(key) {
+	case IsNodeKey(key):
 		ci = s.c.nodeIndex
 		id, _ = nodeIDFromKey(key)
-	} else if IsTokenKey(key) {
+	case IsTokenKey(key):
 		ci = s.c.tokenIndex
 		id, _ = tokenIDFromKey(key)
-	} else {
+	default:
 		s.Log.Error("iFK Unknown key", "key", key)
 		return []string{}
 	}

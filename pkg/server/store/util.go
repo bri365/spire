@@ -32,5 +32,4 @@ func removeString(a []string, s string) []string {
 // stringPlusOne returns a string with one bit added to the given string.
 func stringPlusOne(s string) string {
 	return fmt.Sprintf("%s ", s)
-
 }

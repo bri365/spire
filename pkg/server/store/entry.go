@@ -8,19 +8,17 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/gofrs/uuid"
-	"github.com/golang/protobuf/proto"
 	"github.com/spiffe/spire/pkg/server/plugin/datastore"
 	"github.com/spiffe/spire/pkg/server/plugin/store"
 	"github.com/spiffe/spire/proto/spire/common"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 )
 
 // CountRegistrationEntries counts all registrations.
 func (s *Shim) CountRegistrationEntries(ctx context.Context,
 	req *datastore.CountRegistrationEntriesRequest) (*datastore.CountRegistrationEntriesResponse, error) {
-
 	// Fall back to SQL if store is not configured
 	if s.Store == nil {
 		return s.DataStore.CountRegistrationEntries(ctx, req)
@@ -40,7 +38,6 @@ func (s *Shim) CountRegistrationEntries(ctx context.Context,
 // CreateRegistrationEntry adds the given registration entry to the store.
 func (s *Shim) CreateRegistrationEntry(ctx context.Context,
 	req *datastore.CreateRegistrationEntryRequest) (*datastore.CreateRegistrationEntryResponse, error) {
-
 	if s.Store == nil {
 		return s.DataStore.CreateRegistrationEntry(ctx, req)
 	}
@@ -131,7 +128,6 @@ func (s *Shim) CreateRegistrationEntry(ctx context.Context,
 // DeleteRegistrationEntry deletes the given registration entry.
 func (s *Shim) DeleteRegistrationEntry(ctx context.Context,
 	req *datastore.DeleteRegistrationEntryRequest) (*datastore.DeleteRegistrationEntryResponse, error) {
-
 	if s.Store == nil {
 		return s.DataStore.DeleteRegistrationEntry(ctx, req)
 	}
@@ -185,7 +181,6 @@ func (s *Shim) DeleteRegistrationEntry(ctx context.Context,
 // FetchRegistrationEntry fetches an existing registration by entry ID
 func (s *Shim) FetchRegistrationEntry(ctx context.Context,
 	req *datastore.FetchRegistrationEntryRequest) (resp *datastore.FetchRegistrationEntryResponse, err error) {
-
 	if s.Store == nil {
 		return s.DataStore.FetchRegistrationEntry(ctx, req)
 	}
@@ -207,7 +202,6 @@ func (s *Shim) FetchRegistrationEntry(ctx context.Context,
 // fetchRegistrationEntry fetches an existing registration by entry ID
 func (s *Shim) fetchEntry(ctx context.Context,
 	req *datastore.FetchRegistrationEntryRequest) (*datastore.FetchRegistrationEntryResponse, int64, error) {
-
 	res, err := s.Store.Get(ctx, &store.GetRequest{Key: EntryKey(req.EntryId)})
 	if err != nil {
 		return nil, 0, err
@@ -224,7 +218,7 @@ func (s *Shim) fetchEntry(ctx context.Context,
 		}
 		resp.Entry = entry
 	} else if len(res.Kvs) > 1 {
-		return resp, 0, fmt.Errorf("More than one entry for %s", req.EntryId)
+		return resp, 0, fmt.Errorf("more than one entry for %s", req.EntryId)
 	}
 	return resp, ver, nil
 }
@@ -232,12 +226,11 @@ func (s *Shim) fetchEntry(ctx context.Context,
 // ListRegistrationEntries lists all registrations (pagination available)
 func (s *Shim) ListRegistrationEntries(ctx context.Context,
 	req *datastore.ListRegistrationEntriesRequest) (resp *datastore.ListRegistrationEntriesResponse, err error) {
-
 	if s.Store == nil {
 		return s.DataStore.ListRegistrationEntries(ctx, req)
 	}
 
-	resp, _, err = s.listRegistrationEntries(ctx, 0, req)
+	resp, err = s.listRegistrationEntries(ctx, 0, req)
 
 	return
 }
@@ -245,13 +238,12 @@ func (s *Shim) ListRegistrationEntries(ctx context.Context,
 // listRegistrationEntries lists all registrations (pagination available)
 // Store revision is accepted and returned for consistency across paginated calls.
 func (s *Shim) listRegistrationEntries(ctx context.Context, revision int64,
-	req *datastore.ListRegistrationEntriesRequest) (*datastore.ListRegistrationEntriesResponse, int64, error) {
-
+	req *datastore.ListRegistrationEntriesRequest) (*datastore.ListRegistrationEntriesResponse, error) {
 	if req.Pagination != nil && req.Pagination.PageSize == 0 {
-		return nil, 0, status.Error(codes.InvalidArgument, "cannot paginate with pagesize = 0")
+		return nil, status.Error(codes.InvalidArgument, "cannot paginate with pagesize = 0")
 	}
 	if req.BySelectors != nil && len(req.BySelectors.Selectors) == 0 {
-		return nil, 0, status.Error(codes.InvalidArgument, "cannot list by empty selector set")
+		return nil, status.Error(codes.InvalidArgument, "cannot list by empty selector set")
 	}
 
 	// If specific rev not requested and we are filtering with one or more indices, get the
@@ -260,7 +252,7 @@ func (s *Shim) listRegistrationEntries(ctx context.Context, revision int64,
 	if rev == 0 && (req.ByFederatesWith != nil || req.ByParentId != nil || req.BySpiffeId != nil || req.BySelectors != nil) {
 		res, err := s.Store.Get(ctx, &store.GetRequest{Key: EntryPrefix, End: AllEntries, Limit: 1})
 		if err != nil {
-			return nil, 0, err
+			return nil, err
 		}
 		rev = res.Revision
 	}
@@ -272,7 +264,7 @@ func (s *Shim) listRegistrationEntries(ctx context.Context, revision int64,
 	if req.BySpiffeId != nil && req.BySpiffeId.Value != "" {
 		ids, err := s.entrySidSet(ctx, rev, req.BySpiffeId.Value)
 		if err != nil {
-			return nil, 0, err
+			return nil, err
 		}
 		idSets = append(idSets, ids)
 	}
@@ -280,7 +272,7 @@ func (s *Shim) listRegistrationEntries(ctx context.Context, revision int64,
 	if req.ByParentId != nil && req.ByParentId.Value != "" {
 		ids, err := s.entryPidSet(ctx, rev, req.ByParentId.Value)
 		if err != nil {
-			return nil, 0, err
+			return nil, err
 		}
 		idSets = append(idSets, ids)
 	}
@@ -290,20 +282,21 @@ func (s *Shim) listRegistrationEntries(ctx context.Context, revision int64,
 		for _, domain := range req.ByFederatesWith.TrustDomains {
 			ids, err := s.entryFedByDomainSet(ctx, rev, domain)
 			if err != nil {
-				return nil, 0, err
+				return nil, err
 			}
-			if req.ByFederatesWith.Match == datastore.ByFederatesWith_MATCH_EXACT {
+			switch req.ByFederatesWith.Match {
+			case datastore.ByFederatesWith_MATCH_EXACT:
 				// The given selectors are the complete set for an entry to match
 				idSets = append(idSets, ids)
-			} else if req.ByFederatesWith.Match == datastore.ByFederatesWith_MATCH_SUBSET {
+			case datastore.ByFederatesWith_MATCH_SUBSET:
 				// The given selectors are a subset (up to all) of an entry
 				// or a subset of the given selectors match the total selectors of an entry.
 				// Adding these together results in an overly optimistic node list which is culled later.
 				for id := range ids {
 					subset[id] = true
 				}
-			} else {
-				return nil, 0, fmt.Errorf("unhandled match behavior %q", req.ByFederatesWith.Match)
+			default:
+				return nil, fmt.Errorf("unhandled match behavior %q", req.ByFederatesWith.Match)
 			}
 		}
 		if len(subset) > 0 {
@@ -316,20 +309,21 @@ func (s *Shim) listRegistrationEntries(ctx context.Context, revision int64,
 		for _, sel := range req.BySelectors.Selectors {
 			ids, err := s.entrySelSet(ctx, rev, sel)
 			if err != nil {
-				return nil, 0, err
+				return nil, err
 			}
-			if req.BySelectors.Match == datastore.BySelectors_MATCH_EXACT {
+			switch req.BySelectors.Match {
+			case datastore.BySelectors_MATCH_EXACT:
 				// The given selectors are the complete set for an entry to match
 				idSets = append(idSets, ids)
-			} else if req.BySelectors.Match == datastore.BySelectors_MATCH_SUBSET {
+			case datastore.BySelectors_MATCH_SUBSET:
 				// The given selectors are a subset (up to all) of an entry
 				// or a subset of the given selectors match the total selectors of an entry.
 				// Adding these together results in an overly optimistic node list which is culled later.
 				for id := range ids {
 					subset[id] = true
 				}
-			} else {
-				return nil, 0, fmt.Errorf("unhandled match behavior %q", req.BySelectors.Match)
+			default:
+				return nil, fmt.Errorf("unhandled match behavior %q", req.BySelectors.Match)
 			}
 		}
 		if len(subset) > 0 {
@@ -362,7 +356,7 @@ func (s *Shim) listRegistrationEntries(ctx context.Context, revision int64,
 		limit = int64(p.PageSize)
 		if len(p.Token) > 0 {
 			if len(p.Token) < 5 || p.Token[0:2] != EntryPrefix {
-				return nil, 0, status.Errorf(codes.InvalidArgument, "invalid token '%s'", p.Token)
+				return nil, status.Errorf(codes.InvalidArgument, "invalid token '%s'", p.Token)
 			}
 			key = stringPlusOne(p.Token)
 		}
@@ -406,7 +400,7 @@ func (s *Shim) listRegistrationEntries(ctx context.Context, revision int64,
 				// Batches would be PageSize if paginated or a few hundred to a thousand at a time
 				res, err := s.Store.Get(ctx, &store.GetRequest{Key: EntryKey(id), Revision: rev})
 				if err != nil {
-					return nil, 0, err
+					return nil, err
 				}
 
 				if len(res.Kvs) != 1 {
@@ -417,7 +411,7 @@ func (s *Shim) listRegistrationEntries(ctx context.Context, revision int64,
 				}
 
 				if err = proto.Unmarshal(res.Kvs[0].Value, e); err != nil {
-					return nil, 0, err
+					return nil, err
 				}
 			}
 
@@ -465,7 +459,7 @@ func (s *Shim) listRegistrationEntries(ctx context.Context, revision int64,
 					resp.Pagination = p
 				}
 				s.c.mu.RUnlock()
-				return resp, s.c.storeRevision, nil
+				return resp, nil
 			}
 			s.c.mu.RUnlock()
 		}
@@ -473,14 +467,13 @@ func (s *Shim) listRegistrationEntries(ctx context.Context, revision int64,
 		// Cache not available or does not support the requested revision
 		res, err := s.Store.Get(ctx, &store.GetRequest{Key: key, End: AllEntries, Limit: limit, Revision: rev})
 		if err != nil {
-			return nil, 0, err
+			return nil, err
 		}
 
-		rev = res.Revision
 		for _, kv := range res.Kvs {
 			e := &common.RegistrationEntry{}
 			if err = proto.Unmarshal(kv.Value, e); err != nil {
-				return nil, 0, err
+				return nil, err
 			}
 			resp.Entries = append(resp.Entries, e)
 			lastKey = kv.Key
@@ -498,7 +491,7 @@ func (s *Shim) listRegistrationEntries(ctx context.Context, revision int64,
 		resp.Pagination = p
 	}
 
-	return resp, rev, nil
+	return resp, nil
 }
 
 // PruneRegistrationEntries deletes all entries which have expired before the given time
@@ -538,7 +531,6 @@ func (s *Shim) PruneRegistrationEntries(ctx context.Context,
 // UpdateRegistrationEntry updates an existing registration entry
 func (s *Shim) UpdateRegistrationEntry(ctx context.Context,
 	req *datastore.UpdateRegistrationEntryRequest) (*datastore.UpdateRegistrationEntryResponse, error) {
-
 	if s.Store == nil {
 		return s.DataStore.UpdateRegistrationEntry(ctx, req)
 	}
@@ -609,9 +601,7 @@ func (s *Shim) UpdateRegistrationEntry(ctx context.Context,
 			put = append(put, &store.KeyValue{Key: key})
 
 			// No need to delete the key if we are changing it
-			if _, ok := delKeys[key]; ok {
-				delete(delKeys, key)
-			}
+			delete(delKeys, key)
 		}
 
 		// Delete remaining unused index keys
@@ -771,11 +761,11 @@ func (s *Shim) newRegistrationEntryID() (string, error) {
 	return fmt.Sprintf("%d", rev), nil
 	//     testing     testing     testing     //
 	/////////////////////////////////////////////
-	u, err := uuid.NewV4()
-	if err != nil {
-		return "", err
-	}
-	return u.String(), nil
+	// u, err := uuid.NewV4()
+	// if err != nil {
+	// 	return "", err
+	// }
+	// return u.String(), nil
 }
 
 // IsEntryKey returns true if the given key is a properly formatted registration entry key.
@@ -816,36 +806,6 @@ func entryExpID(key string) (string, error) {
 		return "", fmt.Errorf("invalid entry expiry index key: %s", key)
 	}
 	return items[3], nil
-}
-
-// entryExpSet returns a set of registered entry ids expiring before or after the given expiry.
-// A specific store revision may be supplied for transactional consistency; 0 = current revision
-func (s *Shim) entryExpSet(ctx context.Context, rev, exp int64, after bool) (map[string]bool, error) {
-	// Set range to all index keys after or before the given time
-	key, end := "", ""
-	if after {
-		key = fmt.Sprintf("%s%s%s%d", entryIndex, EXP, Delim, exp)
-		end = fmt.Sprintf("%s%s%s", entryIndex, EXP, Delend)
-	} else {
-		key = fmt.Sprintf("%s%s%s", entryIndex, EXP, Delim)
-		end = fmt.Sprintf("%s%s%s%d", entryIndex, EXP, Delim, exp)
-	}
-
-	res, err := s.Store.Get(ctx, &store.GetRequest{Key: key, End: end, Revision: rev})
-	if err != nil {
-		return nil, err
-	}
-
-	ids := map[string]bool{}
-	for _, kv := range res.Kvs {
-		id, err := entryExpID(kv.Key)
-		if err != nil {
-			return nil, err
-		}
-		ids[id] = true
-	}
-
-	return ids, nil
 }
 
 // entryFedByDomainKey returns a string formatted key for a registered entry id indexed by federated bundle domain.
@@ -1016,12 +976,13 @@ func (s *Shim) entrySelSet(ctx context.Context, rev int64, sel *common.Selector)
 func (s *Shim) entrySelectorMatch(entry *common.RegistrationEntry, req *datastore.BySelectors) bool {
 	entrySelectors := selectorMap(entry.Selectors)
 	reqSelectors := selectorMap(req.Selectors)
-	if req.Match == datastore.BySelectors_MATCH_EXACT {
+	switch req.Match {
+	case datastore.BySelectors_MATCH_EXACT:
 		// Are the requested selectors the complete set of entry selectors?
 		if reflect.DeepEqual(entrySelectors, reqSelectors) {
 			return true
 		}
-	} else if req.Match == datastore.BySelectors_MATCH_SUBSET {
+	case datastore.BySelectors_MATCH_SUBSET:
 		// Do all entry selectors exist in request selectors?
 		for entryType, entryValue := range entrySelectors {
 			reqValue, ok := reqSelectors[entryType]
@@ -1034,7 +995,7 @@ func (s *Shim) entrySelectorMatch(entry *common.RegistrationEntry, req *datastor
 			}
 		}
 		return true
-	} else {
+	default:
 		s.Log.Warn(fmt.Sprintf("Unknown match %v", req.Match))
 	}
 	return false

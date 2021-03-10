@@ -173,7 +173,7 @@ func createFunc(cmd *cobra.Command, args []string) {
 	entries := createHostgroupEntries()
 
 	// Create lists of workload entries for each hostgroup
-	entries = append(entries, createWorkloadEntries(totalWorkloads, bundles)...)
+	entries = append(entries, createWorkloadEntries(totalWorkloads)...)
 
 	// Store the entries
 	storeEntries(clients, entries)
@@ -244,12 +244,10 @@ func storeFederatedBundles(client *clientv3.Client, all []*types.Bundle) {
 	finish := time.Now().UnixNano()
 	delta := (float64(finish) - float64(start)) / 1000000000.0
 	fmt.Printf("%d bundles written in %.3f sec (%.3f ops/sec)\n", len(all), delta, float64(len(all))/delta)
-
-	return
 }
 
 // createWorkloadEntries() {}
-func createWorkloadEntries(total int, bundles []*types.Bundle) []*common.RegistrationEntry {
+func createWorkloadEntries(total int) []*common.RegistrationEntry {
 	entries := []*common.RegistrationEntry{}
 	for i := 0; i < total; i++ {
 		region := regions[rand.Intn(len(regions))]
@@ -417,8 +415,6 @@ func storeEntries(clients []*clientv3.Client, all []*common.RegistrationEntry) {
 
 	delta := (float64(finish) - float64(start)) / 1000000000.0
 	fmt.Printf("%d entries written in %.3f sec (%.3f ops/sec) and %d errors\n", len(all), delta, float64(len(all))/delta, totalErrors)
-
-	return
 }
 
 func (ec *etcdClient) storeEntry(e *common.RegistrationEntry, idx bool) error {
@@ -472,11 +468,7 @@ func createNodes(rc, cc, nc int) []*common.AttestedNode {
 	for r := 0; r < rc; r++ {
 		for c := 0; c < cc; c++ {
 			for n := 0; n < nc; n++ {
-				node, err := createNode(regions[r], clusters[c], mustUUID(), n)
-				if err != nil {
-					fmt.Printf("Error generating node %d: %v", n, err)
-					os.Exit(1)
-				}
+				node := createNode(regions[r], clusters[c], mustUUID(), n)
 				if debug {
 					fmt.Printf("Node %s : %v\n\n", node.SpiffeId, node.Selectors)
 				}
@@ -505,7 +497,7 @@ func selectorValue(sel []*common.Selector, key string) string {
 }
 
 // createNode creates a node.
-func createNode(region, cluster, name string, num int) (*common.AttestedNode, error) {
+func createNode(region, cluster, name string, num int) *common.AttestedNode {
 	id := url.URL{
 		Scheme: "spiffe",
 		Host:   trustDomain,
@@ -550,7 +542,7 @@ func createNode(region, cluster, name string, num int) (*common.AttestedNode, er
 	archByRegion[region][arch] = append(archByRegion[region][arch], n)
 	gpuByRegion[region][gpu] = append(gpuByRegion[region][gpu], n)
 
-	return n, nil
+	return n
 }
 
 func storeNodes(clients []*clientv3.Client, allNodes []*common.AttestedNode, nodesPerClient int) {
@@ -600,8 +592,6 @@ func storeNodes(clients []*clientv3.Client, allNodes []*common.AttestedNode, nod
 
 	delta := (float64(finish) - float64(start)) / 1000000000.0
 	fmt.Printf("%d nodes written in %.3f sec (%.3f ops/sec) and %d errors\n", total, delta, float64(total)/delta, totalErrors)
-
-	return
 }
 
 func (ec *etcdClient) storeNode(n *common.AttestedNode, idx bool) error {
@@ -647,11 +637,12 @@ func regionsAndClusters(total int) (r, c int) {
 		r = 1
 	}
 
-	if total < 10 {
+	switch {
+	case total < 10:
 		c = 1
-	} else if total < 1000 {
+	case total < 1000:
 		c = int(math.Log(float64(total)/6) / 0.5)
-	} else {
+	default:
 		c = int(math.Log(float64(total)/464)/0.077 + 1)
 	}
 	return

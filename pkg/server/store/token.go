@@ -6,17 +6,16 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/golang/protobuf/proto"
 	"github.com/spiffe/spire/pkg/server/plugin/datastore"
 	"github.com/spiffe/spire/pkg/server/plugin/store"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 )
 
 // CreateJoinToken adds the given join token to the store.
 func (s *Shim) CreateJoinToken(ctx context.Context,
 	req *datastore.CreateJoinTokenRequest) (*datastore.CreateJoinTokenResponse, error) {
-
 	if s.Store == nil {
 		return s.DataStore.CreateJoinToken(ctx, req)
 	}
@@ -59,7 +58,6 @@ func (s *Shim) CreateJoinToken(ctx context.Context,
 // DeleteJoinToken deletes the given join token from the store.
 func (s *Shim) DeleteJoinToken(ctx context.Context,
 	req *datastore.DeleteJoinTokenRequest) (*datastore.DeleteJoinTokenResponse, error) {
-
 	if s.Store == nil {
 		return s.DataStore.DeleteJoinToken(ctx, req)
 	}
@@ -101,7 +99,6 @@ func (s *Shim) DeleteJoinToken(ctx context.Context,
 // FetchJoinToken fetches an existing join token.
 func (s *Shim) FetchJoinToken(ctx context.Context,
 	req *datastore.FetchJoinTokenRequest) (resp *datastore.FetchJoinTokenResponse, err error) {
-
 	if s.Store == nil {
 		return s.DataStore.FetchJoinToken(ctx, req)
 	}
@@ -127,7 +124,6 @@ func (s *Shim) FetchJoinToken(ctx context.Context,
 // fetchJoinToken fetches an existing join token and the token version.
 func (s *Shim) fetchToken(ctx context.Context,
 	req *datastore.FetchJoinTokenRequest) (*datastore.FetchJoinTokenResponse, int64, error) {
-
 	res, err := s.Store.Get(ctx, &store.GetRequest{Key: tokenKey(req.Token)})
 	if err != nil {
 		return nil, 0, err
@@ -144,7 +140,7 @@ func (s *Shim) fetchToken(ctx context.Context,
 		}
 		resp.JoinToken = token
 	} else if len(res.Kvs) > 1 {
-		return resp, 0, fmt.Errorf("More than one entry for %s", req.Token)
+		return resp, 0, fmt.Errorf("more than one entry for %s", req.Token)
 	}
 	return resp, ver, nil
 }
@@ -153,7 +149,6 @@ func (s *Shim) fetchToken(ctx context.Context,
 // Store revision is accepted and returned for consistency across paginated calls.
 func (s *Shim) listJoinTokens(ctx context.Context, rev int64,
 	req *datastore.ListJoinTokensRequest) (*datastore.ListJoinTokensResponse, int64, error) {
-
 	if req.Pagination != nil && req.Pagination.PageSize == 0 {
 		return nil, 0, status.Error(codes.InvalidArgument, "cannot paginate with pagesize = 0")
 	}
@@ -208,7 +203,6 @@ func (s *Shim) listJoinTokens(ctx context.Context, rev int64,
 // PruneJoinTokens deletes all tokens which have expired before the given time.
 func (s *Shim) PruneJoinTokens(ctx context.Context,
 	req *datastore.PruneJoinTokensRequest) (*datastore.PruneJoinTokensResponse, error) {
-
 	if s.Store == nil {
 		return s.DataStore.PruneJoinTokens(ctx, req)
 	}

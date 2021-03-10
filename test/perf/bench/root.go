@@ -36,7 +36,6 @@ var (
 	debug        bool
 	progress     bool
 	show         bool
-	total        int
 	totalConns   uint
 	totalClients uint
 	totalErrors  uint

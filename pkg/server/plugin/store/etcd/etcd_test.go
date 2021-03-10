@@ -2,11 +2,8 @@ package etcd
 
 import (
 	"context"
-	crypto_rand "crypto/rand"
 	"crypto/x509"
-	"encoding/binary"
 	"fmt"
-	math_rand "math/rand"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -33,14 +30,6 @@ const (
 	_alreadyExistsErrMsg   = "store-etcd: record already exists"
 )
 
-const (
-	domainLength          = 3
-	hostComponentMaxCount = 5
-	hostComponentMaxSize  = 40
-	pathComponentMaxCount = 8
-	pathComponentMaxSize  = 50
-)
-
 var (
 	ctx = context.Background()
 
@@ -50,8 +39,6 @@ var (
 	TestCA        string
 	TestCert      string
 	TestKey       string
-
-	chars = []rune("abcdefghijklmnopqrstuvwxyz")
 )
 
 type PluginSuite struct {
@@ -60,8 +47,6 @@ type PluginSuite struct {
 	cert   *x509.Certificate
 	cacert *x509.Certificate
 
-	dir        string
-	nextID     int
 	st         store.Plugin
 	shim       *ss.Shim
 	etcdPlugin *Plugin
@@ -197,48 +182,4 @@ func (s *PluginSuite) TestRace() {
 		_, err = s.shim.FetchAttestedNode(ctx, &datastore.FetchAttestedNodeRequest{SpiffeId: node.SpiffeId})
 		require.NoError(t, err)
 	})
-}
-
-func randInit() {
-	// Seed math/rand for improved randomness
-	var b [8]byte
-	_, err := crypto_rand.Read(b[:])
-	if err != nil {
-		panic("cannot seed math/rand with crypto/rand")
-	}
-	math_rand.Seed(int64(binary.LittleEndian.Uint64(b[:])))
-}
-
-func randString(length int) string {
-	if length < 1 {
-		return ""
-	}
-	b := make([]rune, length)
-	for i := range b {
-		b[i] = chars[math_rand.Intn(len(chars))]
-	}
-	return string(b)
-}
-
-func randSpiffeID(hostPartCount, pathPartCount int) string {
-	if hostPartCount < 1 {
-		hostPartCount = 1
-	}
-	if pathPartCount < 1 {
-		pathPartCount = 1
-	}
-
-	domain := randString(domainLength)
-
-	host := randString(math_rand.Intn(hostComponentMaxSize))
-	for i := 1; i < hostPartCount; i++ {
-		host = fmt.Sprintf("%s-%s", host, randString(math_rand.Intn(hostComponentMaxSize)))
-	}
-
-	path := randString(math_rand.Intn(pathComponentMaxSize))
-	for i := 1; i < pathPartCount; i++ {
-		path = fmt.Sprintf("%s/%s", path, randString(math_rand.Intn(pathComponentMaxSize)))
-	}
-
-	return fmt.Sprintf("spiffe://%s.%s/%s", host, domain, path)
 }

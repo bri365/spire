@@ -735,9 +735,12 @@ func (s *PluginSuite) TestUpdateAttestedNode() {
 				NewCertNotAfter:     newExpires,
 				NewCertSerialNumber: newSerial,
 			}
-			s.shim.DeleteAttestedNode(ctx, &datastore.DeleteAttestedNodeRequest{SpiffeId: nodeID})
+			_, err := s.shim.DeleteAttestedNode(ctx, &datastore.DeleteAttestedNodeRequest{SpiffeId: nodeID})
+			if err != nil {
+				s.T().Log(err)
+			}
 
-			_, err := s.shim.CreateAttestedNode(ctx, &datastore.CreateAttestedNodeRequest{Node: node})
+			_, err = s.shim.CreateAttestedNode(ctx, &datastore.CreateAttestedNodeRequest{Node: node})
 			s.Require().NoError(err)
 
 			// Update attested node

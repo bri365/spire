@@ -1091,15 +1091,15 @@ func (s *PluginSuite) cleanStore() {
 			s.T().Log(err)
 		}
 	}
-
-	return
 }
 
 func (s *PluginSuite) deleteRegistrationEntry(entry *common.RegistrationEntry) {
-	s.shim.DeleteRegistrationEntry(ctx, &datastore.DeleteRegistrationEntryRequest{
+	_, err := s.shim.DeleteRegistrationEntry(ctx, &datastore.DeleteRegistrationEntryRequest{
 		EntryId: entry.EntryId,
 	})
-	return
+	if err != nil {
+		s.T().Log(err)
+	}
 }
 
 func (s *PluginSuite) fetchRegistrationEntry(entryID string) *common.RegistrationEntry {

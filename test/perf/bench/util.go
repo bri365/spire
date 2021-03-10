@@ -19,10 +19,7 @@ type etcdClient struct {
 }
 
 const (
-	chars    = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
-	hex      = "0123456789abcdef"
 	lowerNum = "0123456789abcdefghijklmnopqrstuvwxyz"
-	numbers  = "0123456789"
 )
 
 var (

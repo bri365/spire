@@ -9,19 +9,18 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/golang/protobuf/proto"
 	"github.com/spiffe/spire/pkg/common/protoutil"
 	"github.com/spiffe/spire/pkg/server/plugin/datastore"
 	"github.com/spiffe/spire/pkg/server/plugin/store"
 	"github.com/spiffe/spire/proto/spire/common"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 )
 
 // CountAttestedNodes counts all attested nodes in the store
 func (s *Shim) CountAttestedNodes(ctx context.Context,
 	req *datastore.CountAttestedNodesRequest) (*datastore.CountAttestedNodesResponse, error) {
-
 	// Fall back to SQL if store is not configured
 	if s.Store == nil {
 		return s.DataStore.CountAttestedNodes(ctx, req)
@@ -42,7 +41,6 @@ func (s *Shim) CountAttestedNodes(ctx context.Context,
 // CreateAttestedNode adds the given attested node to the store.
 func (s *Shim) CreateAttestedNode(ctx context.Context,
 	req *datastore.CreateAttestedNodeRequest) (*datastore.CreateAttestedNodeResponse, error) {
-
 	if s.Store == nil {
 		return s.DataStore.CreateAttestedNode(ctx, req)
 	}
@@ -92,7 +90,6 @@ func (s *Shim) CreateAttestedNode(ctx context.Context,
 // DeleteAttestedNode deletes the given attested node.
 func (s *Shim) DeleteAttestedNode(ctx context.Context,
 	req *datastore.DeleteAttestedNodeRequest) (*datastore.DeleteAttestedNodeResponse, error) {
-
 	if s.Store == nil {
 		return s.DataStore.DeleteAttestedNode(ctx, req)
 	}
@@ -143,12 +140,9 @@ func (s *Shim) DeleteAttestedNode(ctx context.Context,
 // FetchAttestedNode fetches an existing attested node by SPIFFE ID.
 func (s *Shim) FetchAttestedNode(ctx context.Context,
 	req *datastore.FetchAttestedNodeRequest) (resp *datastore.FetchAttestedNodeResponse, err error) {
-
 	if s.Store == nil {
 		return s.DataStore.FetchAttestedNode(ctx, req)
 	}
-
-	s.Log.Debug("FN", "req", req)
 
 	if s.c.nodeCacheFetch {
 		node := s.fetchNodeCacheEntry(req.SpiffeId)
@@ -164,6 +158,7 @@ func (s *Shim) FetchAttestedNode(ctx context.Context,
 	}
 
 	if s.c.nodeCacheUpdate {
+		s.Log.Warn("node cache miss", "id", resp.Node.SpiffeId)
 		s.setNodeCacheEntry(req.SpiffeId, resp.Node)
 	}
 
@@ -173,7 +168,6 @@ func (s *Shim) FetchAttestedNode(ctx context.Context,
 // fetchNode fetches an existing attested node along with the current version for transactional integrity.
 func (s *Shim) fetchNode(ctx context.Context,
 	req *datastore.FetchAttestedNodeRequest) (*datastore.FetchAttestedNodeResponse, int64, error) {
-
 	res, err := s.Store.Get(ctx, &store.GetRequest{Key: NodeKey(req.SpiffeId)})
 	if err != nil {
 		return nil, 0, err
@@ -190,7 +184,7 @@ func (s *Shim) fetchNode(ctx context.Context,
 		}
 		resp.Node = n
 	} else if len(res.Kvs) > 1 {
-		return resp, 0, fmt.Errorf("More than one node for %s", req.SpiffeId)
+		return resp, 0, fmt.Errorf("more than one node for %s", req.SpiffeId)
 	}
 
 	return resp, ver, nil
@@ -199,12 +193,11 @@ func (s *Shim) fetchNode(ctx context.Context,
 // ListAttestedNodes lists all attested nodes, optionally filtered and/or paginated.
 func (s *Shim) ListAttestedNodes(ctx context.Context,
 	req *datastore.ListAttestedNodesRequest) (resp *datastore.ListAttestedNodesResponse, err error) {
-
 	if s.Store == nil {
 		return s.DataStore.ListAttestedNodes(ctx, req)
 	}
 
-	resp, _, err = s.listAttestedNodes(ctx, 0, req)
+	resp, err = s.listAttestedNodes(ctx, 0, req)
 
 	return
 }
@@ -212,13 +205,12 @@ func (s *Shim) ListAttestedNodes(ctx context.Context,
 // listAttestedNodes lists all attested nodes, optionally filtered and/or paginated.
 // Store revision is accepted and returned for consistency across paginated calls.
 func (s *Shim) listAttestedNodes(ctx context.Context, revision int64,
-	req *datastore.ListAttestedNodesRequest) (*datastore.ListAttestedNodesResponse, int64, error) {
-
+	req *datastore.ListAttestedNodesRequest) (*datastore.ListAttestedNodesResponse, error) {
 	if req.Pagination != nil && req.Pagination.PageSize == 0 {
-		return nil, 0, status.Error(codes.InvalidArgument, "cannot paginate with pagesize = 0")
+		return nil, status.Error(codes.InvalidArgument, "cannot paginate with pagesize = 0")
 	}
 	if req.BySelectorMatch != nil && len(req.BySelectorMatch.Selectors) == 0 {
-		return nil, 0, status.Error(codes.InvalidArgument, "cannot list by empty selectors set")
+		return nil, status.Error(codes.InvalidArgument, "cannot list by empty selectors set")
 	}
 
 	// If specific rev not requested and we are filtering with one or more indices, get the
@@ -227,7 +219,7 @@ func (s *Shim) listAttestedNodes(ctx context.Context, revision int64,
 	if rev == 0 && (req.ByAttestationType != "" || req.ByBanned != nil || req.ByExpiresBefore != nil || req.BySelectorMatch != nil) {
 		res, err := s.Store.Get(ctx, &store.GetRequest{Key: NodePrefix, End: AllNodes, Limit: 1})
 		if err != nil {
-			return nil, 0, err
+			return nil, err
 		}
 		rev = res.Revision
 	}
@@ -239,7 +231,7 @@ func (s *Shim) listAttestedNodes(ctx context.Context, revision int64,
 	if req.ByAttestationType != "" {
 		ids, err := s.nodeAdtMap(ctx, rev, req.ByAttestationType)
 		if err != nil {
-			return nil, 0, err
+			return nil, err
 		}
 		idSets = append(idSets, ids)
 	}
@@ -247,7 +239,7 @@ func (s *Shim) listAttestedNodes(ctx context.Context, revision int64,
 	if req.ByBanned != nil {
 		ids, err := s.nodeBanMap(ctx, rev, req.ByBanned.Value)
 		if err != nil {
-			return nil, 0, err
+			return nil, err
 		}
 		idSets = append(idSets, ids)
 	}
@@ -255,7 +247,7 @@ func (s *Shim) listAttestedNodes(ctx context.Context, revision int64,
 	if req.ByExpiresBefore != nil {
 		ids, err := s.nodeExpMap(ctx, rev, req.ByExpiresBefore.Value, false)
 		if err != nil {
-			return nil, 0, err
+			return nil, err
 		}
 		idSets = append(idSets, ids)
 	}
@@ -265,20 +257,21 @@ func (s *Shim) listAttestedNodes(ctx context.Context, revision int64,
 		for _, sel := range req.BySelectorMatch.Selectors {
 			ids, err := s.nodeSelMap(ctx, rev, sel)
 			if err != nil {
-				return nil, 0, err
+				return nil, err
 			}
-			if req.BySelectorMatch.Match == datastore.BySelectors_MATCH_EXACT {
+			switch req.BySelectorMatch.Match {
+			case datastore.BySelectors_MATCH_EXACT:
 				// The given selectors are the complete set for a node to match
 				idSets = append(idSets, ids)
-			} else if req.BySelectorMatch.Match == datastore.BySelectors_MATCH_SUBSET {
+			case datastore.BySelectors_MATCH_SUBSET:
 				// The given selectors are a subset (up to all) of a node
 				// or a subset of the given selectors match the total selectors of a node.
 				// Adding these together results in an overly optimistic node list which is culled later.
 				for id := range ids {
 					subset[id] = true
 				}
-			} else {
-				return nil, 0, fmt.Errorf("unhandled match behavior %q", req.BySelectorMatch.Match)
+			default:
+				return nil, fmt.Errorf("unhandled match behavior %q", req.BySelectorMatch.Match)
 			}
 		}
 		if len(subset) > 0 {
@@ -311,7 +304,7 @@ func (s *Shim) listAttestedNodes(ctx context.Context, revision int64,
 		limit = int64(p.PageSize)
 		if len(p.Token) > 0 {
 			if len(p.Token) < 5 || p.Token[0:2] != NodePrefix {
-				return nil, 0, status.Errorf(codes.InvalidArgument, "could not parse token '%s'", p.Token)
+				return nil, status.Errorf(codes.InvalidArgument, "could not parse token '%s'", p.Token)
 			}
 			key = stringPlusOne(p.Token)
 		}
@@ -358,7 +351,7 @@ func (s *Shim) listAttestedNodes(ctx context.Context, revision int64,
 				// Batches would be PageSize if paginated or a few hundred to a thousand at a time
 				res, err := s.Store.Get(ctx, &store.GetRequest{Key: NodeKey(id), Revision: rev})
 				if err != nil {
-					return nil, 0, err
+					return nil, err
 				}
 
 				if len(res.Kvs) != 1 {
@@ -369,7 +362,7 @@ func (s *Shim) listAttestedNodes(ctx context.Context, revision int64,
 				}
 
 				if err = proto.Unmarshal(res.Kvs[0].Value, n); err != nil {
-					return nil, 0, err
+					return nil, err
 				}
 			}
 
@@ -378,7 +371,7 @@ func (s *Shim) listAttestedNodes(ctx context.Context, revision int64,
 				if !s.nodeSelectorMatch(n, req.BySelectorMatch) {
 					continue
 				}
-			} else if req.FetchSelectors == false {
+			} else if !req.FetchSelectors {
 				// Do not return selectors if not requested or filtered by selectors
 				n = nodeWithoutSelectors(n)
 			}
@@ -408,7 +401,7 @@ func (s *Shim) listAttestedNodes(ctx context.Context, revision int64,
 					i++
 				}
 				s.c.mu.RUnlock()
-				return resp, r, nil
+				return resp, nil
 			}
 			s.c.mu.RUnlock()
 		}
@@ -418,7 +411,7 @@ func (s *Shim) listAttestedNodes(ctx context.Context, revision int64,
 		a := s.clock.Now().UnixNano()
 		res, err := s.Store.Get(ctx, &store.GetRequest{Key: key, End: AllNodes, Limit: limit, Revision: rev})
 		if err != nil {
-			return nil, 0, err
+			return nil, err
 		}
 
 		b := s.clock.Now().UnixNano()
@@ -427,9 +420,9 @@ func (s *Shim) listAttestedNodes(ctx context.Context, revision int64,
 			n := &common.AttestedNode{}
 			err = proto.Unmarshal(kv.Value, n)
 			if err != nil {
-				return nil, 0, err
+				return nil, err
 			}
-			if req.FetchSelectors == false {
+			if !req.FetchSelectors {
 				// Do not return selectors if not requested
 				n = nodeWithoutSelectors(n)
 			}
@@ -450,7 +443,7 @@ func (s *Shim) listAttestedNodes(ctx context.Context, revision int64,
 		resp.Pagination = p
 	}
 
-	return resp, rev, nil
+	return resp, nil
 }
 
 // nodeWithoutSelectors return a copy of an attested node without selectors.
@@ -469,7 +462,6 @@ func nodeWithoutSelectors(n *common.AttestedNode) *common.AttestedNode {
 // UpdateAttestedNode updates cert serial number and/or expiration for the given node.
 func (s *Shim) UpdateAttestedNode(ctx context.Context,
 	req *datastore.UpdateAttestedNodeRequest) (*datastore.UpdateAttestedNodeResponse, error) {
-
 	if s.Store == nil {
 		return s.DataStore.UpdateAttestedNode(ctx, req)
 	}
@@ -572,7 +564,6 @@ func (s *Shim) UpdateAttestedNode(ctx context.Context,
 // GetNodeSelectors gets node (agent) selectors for the given node.
 func (s *Shim) GetNodeSelectors(ctx context.Context,
 	req *datastore.GetNodeSelectorsRequest) (*datastore.GetNodeSelectorsResponse, error) {
-
 	if s.Store == nil {
 		return s.DataStore.GetNodeSelectors(ctx, req)
 	}
@@ -595,7 +586,6 @@ func (s *Shim) GetNodeSelectors(ctx context.Context,
 // ListNodeSelectors gets all node (agent) selectors, optionally filtered by expires after.
 func (s *Shim) ListNodeSelectors(ctx context.Context,
 	req *datastore.ListNodeSelectorsRequest) (*datastore.ListNodeSelectorsResponse, error) {
-
 	if s.Store == nil {
 		return s.DataStore.ListNodeSelectors(ctx, req)
 	}
@@ -647,7 +637,6 @@ func (s *Shim) ListNodeSelectors(ctx context.Context,
 // NOTE: the node may or may not exist when this is called
 func (s *Shim) SetNodeSelectors(ctx context.Context,
 	req *datastore.SetNodeSelectorsRequest) (*datastore.SetNodeSelectorsResponse, error) {
-
 	if s.Store == nil {
 		return s.DataStore.SetNodeSelectors(ctx, req)
 	}
@@ -707,9 +696,7 @@ func (s *Shim) SetNodeSelectors(ctx context.Context,
 		put = append(put, &store.KeyValue{Key: key})
 
 		// Remove this key from the delete list as we are changing it
-		if _, ok := delKeys[key]; ok {
-			delete(delKeys, key)
-		}
+		delete(delKeys, key)
 	}
 
 	if len(delKeys) > 0 {
@@ -945,12 +932,13 @@ func (s *Shim) nodeSelMap(ctx context.Context, rev int64, sel *common.Selector) 
 func (s *Shim) nodeSelectorMatch(node *common.AttestedNode, req *datastore.BySelectors) bool {
 	nodeSelectors := selectorMap(node.Selectors)
 	reqSelectors := selectorMap(req.Selectors)
-	if req.Match == datastore.BySelectors_MATCH_EXACT {
+	switch req.Match {
+	case datastore.BySelectors_MATCH_EXACT:
 		// Are the requested selectors the complete set of node selectors?
 		if reflect.DeepEqual(nodeSelectors, reqSelectors) {
 			return true
 		}
-	} else if req.Match == datastore.BySelectors_MATCH_SUBSET {
+	case datastore.BySelectors_MATCH_SUBSET:
 		// Do all node selectors exist in request selectors?
 		for nodeType, nodeValue := range nodeSelectors {
 			reqValue, ok := reqSelectors[nodeType]
@@ -963,7 +951,7 @@ func (s *Shim) nodeSelectorMatch(node *common.AttestedNode, req *datastore.BySel
 			}
 		}
 		return true
-	} else {
+	default:
 		s.Log.Warn(fmt.Sprintf("Unknown match %v", req.Match))
 	}
 	return false

@@ -176,7 +176,6 @@ func (s *PluginSuite) TestBundleCRUD() {
 	lresp, err = s.shim.ListBundles(ctx, &datastore.ListBundlesRequest{})
 	s.Require().NoError(err)
 	s.Empty(lresp.Bundles)
-
 }
 
 func (s *PluginSuite) TestListBundlesWithPagination() {

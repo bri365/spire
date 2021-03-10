@@ -110,10 +110,10 @@ var (
 	AllNodes   = fmt.Sprintf("%s%s", NodeKeyID, Delend)
 	AllTokens  = fmt.Sprintf("%s%s", TokenKeyID, Delend)
 
-	bundleIndex = fmt.Sprintf("%s%s%s", BundleKeyID, IndexKeyID, Delim)
-	entryIndex  = fmt.Sprintf("%s%s%s", EntryKeyID, IndexKeyID, Delim)
-	nodeIndex   = fmt.Sprintf("%s%s%s", NodeKeyID, IndexKeyID, Delim)
-	tokenIndex  = fmt.Sprintf("%s%s%s", TokenKeyID, IndexKeyID, Delim)
+	// bundleIndex = fmt.Sprintf("%s%s%s", BundleKeyID, IndexKeyID, Delim)
+	entryIndex = fmt.Sprintf("%s%s%s", EntryKeyID, IndexKeyID, Delim)
+	nodeIndex  = fmt.Sprintf("%s%s%s", NodeKeyID, IndexKeyID, Delim)
+	tokenIndex = fmt.Sprintf("%s%s%s", TokenKeyID, IndexKeyID, Delim)
 
 	nodeExpPrefix = fmt.Sprintf("%s%s%s", nodeIndex, EXP, Delim)
 	nodeExpAll    = fmt.Sprintf("%s%s%s", nodeIndex, EXP, Delend)
@@ -123,7 +123,7 @@ var (
 func New(ds datastore.DataStore, st store.Store, logger hclog.Logger,
 	cfg *Configuration, etcd *clientv3.Client) (*Shim, error) {
 	if cfg == nil {
-		return nil, errors.New("Empty config")
+		return nil, errors.New("empty config")
 	}
 	store := &Shim{
 		DataStore: ds,

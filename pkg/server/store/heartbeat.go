@@ -38,15 +38,15 @@ func (s *Shim) startHeartbeatService() (int64, error) {
 	ctx := context.TODO()
 	rev, err := s.sendHB(ctx, "", "", 1)
 	if err != nil {
-		return 0, fmt.Errorf("Heartbeat: error getting ID %v", err)
+		return 0, fmt.Errorf("error getting heartbeat ID %v", err)
 	}
 
 	if s.c.heartbeatInterval == 0 {
-		s.Log.Warn("Heartbeat disabled")
+		s.Log.Warn("heartbeat disabled")
 		return rev, nil
 	}
 
-	s.Log.Info("Heartbeat starting", "id", rev)
+	s.Log.Info("heartbeat starting", "id", rev)
 	go s.hbReply(context.TODO(), rev+1)
 	go s.hbSend(rev + 1)
 
@@ -60,7 +60,10 @@ func (s *Shim) hbSend(rev int64) {
 	// Loop forever, sending heartbeats at configured interval
 	ticker := s.clock.Ticker(s.c.heartbeatInterval)
 	for t := range ticker.C {
-		s.sendHB(context.TODO(), id, "", t.UnixNano())
+		_, err := s.sendHB(context.TODO(), id, "", t.UnixNano())
+		if err != nil {
+			s.Log.Error("failed to send heartbeat", "err", err)
+		}
 	}
 }
 
@@ -79,13 +82,13 @@ func (s *Shim) hbReply(ctx context.Context, rev int64) {
 	for w := range hc {
 		if w.Err() != nil {
 			if status.Convert(w.Err()).Code() != codes.Canceled {
-				s.Log.Error("Heartbeat channel error", "error", w.Err())
+				s.Log.Error("heartbeat channel error", "error", w.Err())
 			}
 			return
 		}
 
 		if w.IsProgressNotify() {
-			s.Log.Error("No heartbeats received for 10 minutes")
+			s.Log.Error("no heartbeats received for 10 minutes")
 		}
 
 		for _, e := range w.Events {
@@ -117,7 +120,7 @@ func (s *Shim) hbReply(ctx context.Context, rev int64) {
 				// reply to foreign heartbeat
 				_, err := s.sendHB(ctx, originator, id, ts)
 				if err != nil {
-					s.Log.Error("Heartbeat error sending reply", "originator", originator, "error", err)
+					s.Log.Error("error sending heartbeat reply", "originator", originator, "error", err)
 				}
 			}
 		}
@@ -129,7 +132,7 @@ func (s *Shim) hbReply(ctx context.Context, rev int64) {
 func (s *Shim) sendHB(ctx context.Context, orig, resp string, ts int64) (int64, error) {
 	lease, err := s.Etcd.Grant(ctx, hbTTL)
 	if err != nil {
-		s.Log.Error("Heartbeat failed to acquire lease", "error", err)
+		s.Log.Error("failed to acquire heartbeat lease", "error", err)
 		return 0, err
 	}
 
@@ -147,7 +150,7 @@ func (s *Shim) sendHB(ctx context.Context, orig, resp string, ts int64) (int64, 
 func (s *Shim) parseHB(hb *clientv3.Event) (string, string, int64) {
 	ts, err := strconv.ParseInt(string(hb.Kv.Value), 10, 64)
 	if err != nil {
-		s.Log.Error("Heartbeat invalid payload", "value", string(hb.Kv.Value), "key", hb.Kv.Key)
+		s.Log.Error("invalid heartbeat payload", "value", string(hb.Kv.Value), "key", hb.Kv.Key)
 		return "", "", 0
 	}
 
@@ -160,7 +163,7 @@ func (s *Shim) parseHB(hb *clientv3.Event) (string, string, int64) {
 		return items[1], items[2], ts
 	}
 
-	s.Log.Error("Heartbeat invalid key", "key", string(hb.Kv.Key))
+	s.Log.Error("invalid heartbeat key", "key", string(hb.Kv.Key))
 
 	return "", "", 0
 }
