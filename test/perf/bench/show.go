@@ -19,8 +19,13 @@ var showCmd = &cobra.Command{
 	Run: showFunc,
 }
 
+var (
+	limit int64
+)
+
 func init() {
 	rootCmd.AddCommand(showCmd)
+	createCmd.Flags().Int64Var(&limit, "limit", 100, "number of items to show")
 }
 
 func showFunc(cmd *cobra.Command, args []string) {
@@ -40,7 +45,7 @@ func showFunc(cmd *cobra.Command, args []string) {
 
 	c := mustCreateConn()
 
-	opts := []v3.OpOption{}
+	opts := []v3.OpOption{v3.WithLimit(limit)}
 	switch {
 	case r.end != "":
 		opts = append(opts, v3.WithRange(r.end))

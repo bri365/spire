@@ -6,6 +6,7 @@ import "google/protobuf/timestamp.proto";
 import "google/protobuf/wrappers.proto";
 import "spire/common/plugin/plugin.proto";
 import "spire/common/common.proto";
+import "spire/types/entry.proto";
 
 /////////////////////////////////////////////////////////////////////////////
 // Bundle Messages
@@ -261,7 +262,7 @@ message FetchAuthorizedEntriesRequest {
 }
 
 message FetchAuthorizedEntriesResponse {
-    repeated spire.common.RegistrationEntry entries = 1;
+    repeated spire.types.Entry entries = 1;
 }
 
 message ListRegistrationEntriesRequest {

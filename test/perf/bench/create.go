@@ -158,7 +158,7 @@ func createFunc(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
-	fmt.Printf("Storing %d nodes across %d clusters with %d nodes each\n", totalNodes, regionCount*clusterCount, nodesPerClient)
+	fmt.Printf("Storing %d nodes across %d clusters with %d nodes each\n", totalNodes, regionCount*clusterCount, nodeCount)
 
 	// Store the nodes
 	storeNodes(clients, nodes, nodesPerClient)

@@ -178,6 +178,16 @@ func (s *Shim) DeleteRegistrationEntry(ctx context.Context,
 	return &datastore.DeleteRegistrationEntryResponse{Entry: e}, nil
 }
 
+// FetchAuthorizedEntries fetches entries the specified agent is authorized to distribute
+func (s *Shim) FetchAuthorizedEntries(ctx context.Context,
+	req *datastore.FetchAuthorizedEntriesRequest) (resp *datastore.FetchAuthorizedEntriesResponse, err error) {
+	if s.Store == nil {
+		return s.DataStore.FetchAuthorizedEntries(ctx, req)
+	}
+
+	return resp, nil
+}
+
 // FetchRegistrationEntry fetches an existing registration by entry ID
 func (s *Shim) FetchRegistrationEntry(ctx context.Context,
 	req *datastore.FetchRegistrationEntryRequest) (resp *datastore.FetchRegistrationEntryResponse, err error) {

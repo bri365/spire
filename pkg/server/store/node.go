@@ -595,14 +595,15 @@ func (s *Shim) ListNodeSelectors(ctx context.Context,
 	// Serve from cache if available
 	if s.c.nodeCacheEnabled && s.c.initialized {
 		s.c.mu.RLock()
-		selectors := make([]*datastore.NodeSelectors, len(s.c.nodes))
-		i := 0
+		selectors := make([]*datastore.NodeSelectors, 0, len(s.c.nodes))
 		for _, n := range s.c.nodes {
-			selectors[i] = &datastore.NodeSelectors{
+			if req.ValidAt != nil && req.ValidAt.Seconds > n.CertNotAfter {
+				continue
+			}
+			selectors = append(selectors, &datastore.NodeSelectors{
 				SpiffeId:  n.SpiffeId,
 				Selectors: n.Selectors,
-			}
-			i++
+			})
 		}
 		s.c.mu.RUnlock()
 		return &datastore.ListNodeSelectorsResponse{Selectors: selectors}, nil

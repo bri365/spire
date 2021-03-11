@@ -11,6 +11,7 @@ import (
 	"github.com/roguesoftware/etcd/mvcc/mvccpb"
 	"github.com/spiffe/spire/pkg/server/plugin/datastore"
 	"github.com/spiffe/spire/proto/spire/common"
+	"github.com/spiffe/spire/proto/spire/types"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
@@ -70,6 +71,7 @@ type Cache struct {
 	entryCacheUpdate     bool
 	entryIndex           *cacheIndex
 	entries              map[string]*common.RegistrationEntry
+	entriesByParent      map[spiffeID]map[string]*types.Entry
 
 	nodeCacheEnabled    bool
 	nodeCacheFetch      bool
@@ -77,6 +79,7 @@ type Cache struct {
 	nodeCacheUpdate     bool
 	nodeIndex           *cacheIndex
 	nodes               map[string]*common.AttestedNode
+	nodeAliases         map[spiffeID]map[aliasID]*types.Entry
 
 	tokenCacheEnabled    bool
 	tokenCacheInvalidate bool
